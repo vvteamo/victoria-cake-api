@@ -1,14 +1,14 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-import requests
+import wavespeed
 import base64
 import os
-from datetime import datetime, timedelta
 
 app = Flask(__name__)
 CORS(app, origins=['*'])
 
 def build_prompt(data):
+    # Твоя функция build_prompt остаётся без изменений
     etages = data.get('etages', '1 étage')
     style = data.get('style', 'Classique Chic')
     event = data.get('event', 'Mariage')
@@ -16,13 +16,9 @@ def build_prompt(data):
     hasCustomTopper = data.get('hasCustomTopper', False)
     inscription = data.get('inscription', '')
     wishes = data.get('wishes', '')
-    date = data.get('date', '')
     
     prompt = f"A luxurious {etages} tier wedding cake in {style} style. "
     prompt += f"For a {event} event with {guests} guests. "
-    
-    if date:
-        prompt += f"The cake is needed for {date}. "
     
     if not hasCustomTopper:
         prompt += ("On the top tier, an elegant golden topper stands upright. "
@@ -57,49 +53,25 @@ def generate():
         prompt = build_prompt(data)
         print(f"Prompt: {prompt}")
         
-        api_key = os.environ.get('WAVESPEED_API_KEY')
-        if not api_key:
-            return jsonify({'error': 'API key not configured'}), 500
+        # SDK автоматически подхватит ключ из переменной окружения WAVESPEED_API_KEY
+        output = wavespeed.run(
+            "wavespeed-ai/z-image/turbo",
+            {"prompt": prompt}
+        )
         
-        # Пробуем разные эндпоинты WaveSpeed (по очереди)
-        endpoints = [
-            'https://api.wavespeed.ai/v1/z-image-turbo/generate',
-            'https://api.wavespeed.ai/v1/generate',
-            'https://api.wavespeed.ai/v1/images/generate',
-            'https://api.wavespeed.ai/generate'
-        ]
+        # SDK возвращает URL изображения
+        image_url = output["outputs"][0]
         
-        last_error = None
-        for endpoint in endpoints:
-            try:
-                response = requests.post(
-                    endpoint,
-                    headers={
-                        'Authorization': f'Bearer {api_key}',
-                        'Content-Type': 'application/json'
-                    },
-                    json={
-                        'prompt': prompt,
-                        'size': 1024,
-                        'output_format': 'png',
-                        'enable_sync_mode': True
-                    },
-                    timeout=10
-                )
-                
-                if response.status_code == 200:
-                    image_data = response.content
-                    base64_image = base64.b64encode(image_data).decode('utf-8')
-                    data_url = f"data:image/png;base64,{base64_image}"
-                    return jsonify({'images': [data_url, data_url]})
-                else:
-                    last_error = f"Endpoint {endpoint} returned {response.status_code}"
-                    continue
-            except Exception as e:
-                last_error = f"Endpoint {endpoint} error: {str(e)}"
-                continue
+        # Скачиваем изображение
+        import requests
+        img_response = requests.get(image_url)
+        img_response.raise_for_status()
         
-        return jsonify({'error': f'All endpoints failed. Last error: {last_error}'}), 500
+        # Конвертируем в base64 для отправки на фронтенд
+        base64_image = base64.b64encode(img_response.content).decode('utf-8')
+        data_url = f"data:image/png;base64,{base64_image}"
+        
+        return jsonify({'images': [data_url, data_url]})
         
     except Exception as e:
         print(f"Error: {str(e)}")
