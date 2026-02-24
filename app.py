@@ -1,6 +1,7 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import wavespeed
+import requests
 import base64
 import os
 
@@ -8,7 +9,6 @@ app = Flask(__name__)
 CORS(app, origins=['*'])
 
 def build_prompt(data):
-    # Твоя функция build_prompt остаётся без изменений
     etages = data.get('etages', '1 étage')
     style = data.get('style', 'Classique Chic')
     event = data.get('event', 'Mariage')
@@ -16,9 +16,13 @@ def build_prompt(data):
     hasCustomTopper = data.get('hasCustomTopper', False)
     inscription = data.get('inscription', '')
     wishes = data.get('wishes', '')
+    date = data.get('date', '')
     
     prompt = f"A luxurious {etages} tier wedding cake in {style} style. "
     prompt += f"For a {event} event with {guests} guests. "
+    
+    if date:
+        prompt += f"The cake is needed for {date}. "
     
     if not hasCustomTopper:
         prompt += ("On the top tier, an elegant golden topper stands upright. "
@@ -53,24 +57,37 @@ def generate():
         prompt = build_prompt(data)
         print(f"Prompt: {prompt}")
         
-        # SDK автоматически подхватит ключ из переменной окружения WAVESPEED_API_KEY
-        output = wavespeed.run(
-            "wavespeed-ai/z-image/turbo",
-            {"prompt": prompt}
+        api_key = os.environ.get('WAVESPEED_API_KEY')
+        if not api_key:
+            return jsonify({'error': 'API key not configured'}), 500
+        
+        # Инициализируем клиент Wavespeed
+        client = wavespeed.Client(api_key=api_key)
+        
+        # Используем правильную модель Z-Image-Turbo
+        result = client.run(
+            model="wavespeed-ai/z-image-turbo",
+            inputs={"prompt": prompt}
         )
         
-        # SDK возвращает URL изображения
-        image_url = output["outputs"][0]
-        
-        # Скачиваем изображение
-        import requests
-        img_response = requests.get(image_url)
-        img_response.raise_for_status()
+        # Результат может быть URL или base64
+        if isinstance(result, str) and result.startswith('http'):
+            # Если это URL, скачиваем изображение
+            img_response = requests.get(result)
+            img_response.raise_for_status()
+            image_data = img_response.content
+        elif isinstance(result, bytes):
+            # Если это уже бинарные данные
+            image_data = result
+        else:
+            # Если это что-то другое, пробуем преобразовать
+            image_data = str(result).encode()
         
         # Конвертируем в base64 для отправки на фронтенд
-        base64_image = base64.b64encode(img_response.content).decode('utf-8')
+        base64_image = base64.b64encode(image_data).decode('utf-8')
         data_url = f"data:image/png;base64,{base64_image}"
         
+        # Пока возвращаем два одинаковых (позже сделаем два разных)
         return jsonify({'images': [data_url, data_url]})
         
     except Exception as e:
