@@ -17,13 +17,13 @@ def build_prompt(data):
     inscription = data.get('inscription', '')
     wishes = data.get('wishes', '')
     date = data.get('date', '')
-
+    
     prompt = f"A luxurious {etages} tier wedding cake in {style} style. "
     prompt += f"For a {event} event with {guests} guests. "
-
+    
     if date:
         prompt += f"The cake is needed for {date}. "
-
+    
     if not hasCustomTopper:
         prompt += ("On the top tier, an elegant golden topper stands upright. "
                    "The topper clearly displays the name 'Victoria' in a refined serif font. "
@@ -34,16 +34,16 @@ def build_prompt(data):
                    "that reads 'Victoria' in an elegant script. Just below, delicately engraved, "
                    "'NICE, FRANCE'. The engraving looks like it's part of the marble, "
                    "very refined and understated. ")
-
+    
     if inscription:
         prompt += f"On the cake, there is an inscription that says: '{inscription}'. "
-
+    
     if wishes:
         prompt += f"Additional wishes: {wishes}. "
-
+    
     prompt += ("The cake is set on an elegant marble table with a blurred Mediterranean Sea background, "
                "Nice coastline. Professional food photography, soft daylight, 8k resolution, hyper-realistic.")
-
+    
     return prompt
 
 @app.route('/', methods=['GET'])
@@ -56,30 +56,30 @@ def generate():
         data = request.json
         prompt = build_prompt(data)
         print(f"Prompt: {prompt}")
-
+        
         api_key = os.environ.get('WAVESPEED_API_KEY')
         if not api_key:
             return jsonify({'error': 'API key not configured'}), 500
-
-        client = wavespeed.Client(api_key=api_key)
-        result = client.run(
-            model="wavespeed-ai/z-image-turbo",
-            inputs={"prompt": prompt}
+        
+        # ИСПРАВЛЕНО: используем wavespeed.run с параметром input
+        output = wavespeed.run(
+            "wavespeed-ai/z-image/turbo",
+            {"input": prompt}  # было 'inputs', стало 'input'
         )
-
-        if isinstance(result, str) and result.startswith('http'):
-            img_response = requests.get(result)
-            img_response.raise_for_status()
-            image_data = img_response.content
-        elif isinstance(result, bytes):
-            image_data = result
-        else:
-            image_data = str(result).encode()
-
-        base64_image = base64.b64encode(image_data).decode('utf-8')
+        
+        # Получаем URL изображения из ответа
+        image_url = output["outputs"][0]
+        
+        # Скачиваем изображение
+        img_response = requests.get(image_url)
+        img_response.raise_for_status()
+        
+        # Конвертируем в base64 для отправки на фронтенд
+        base64_image = base64.b64encode(img_response.content).decode('utf-8')
         data_url = f"data:image/png;base64,{base64_image}"
+        
         return jsonify({'images': [data_url, data_url]})
-
+        
     except Exception as e:
         print(f"Error: {str(e)}")
         return jsonify({'error': str(e)}), 500
