@@ -61,14 +61,22 @@ def generate():
         if not api_key:
             return jsonify({'error': 'API key not configured'}), 500
         
-        # ИСПРАВЛЕНО: используем wavespeed.run с параметром input
+        # Прямой вызов wavespeed.run (без создания клиента)
         output = wavespeed.run(
             "wavespeed-ai/z-image/turbo",
-            {"input": prompt}  # было 'inputs', стало 'input'
+            {"input": prompt}
         )
         
         # Получаем URL изображения из ответа
-        image_url = output["outputs"][0]
+        # Формат ответа может отличаться, пробуем разные варианты
+        if isinstance(output, dict) and "outputs" in output:
+            image_url = output["outputs"][0]
+        elif isinstance(output, dict) and "images" in output:
+            image_url = output["images"][0]
+        elif isinstance(output, str):
+            image_url = output
+        else:
+            return jsonify({'error': 'Unexpected response format'}), 500
         
         # Скачиваем изображение
         img_response = requests.get(image_url)
