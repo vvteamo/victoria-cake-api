@@ -60,8 +60,8 @@ def generate():
         if not api_key:
             return jsonify({'error': 'API key not configured'}), 500
         
-        # Правильный эндпоинт из документации
-        url = "https://api.wavespeed.ai/v1/z-image-turbo/generate"
+        # ПРАВИЛЬНЫЙ ЭНДПОИНТ С ОФИЦИАЛЬНОЙ СТРАНИЦЫ МОДЕЛИ
+        url = "https://api.wavespeed.ai/wavespeed-ai/z-image/turbo"
         print(f"Sending request to: {url}")
         
         payload = {
@@ -82,7 +82,7 @@ def generate():
         if response.status_code != 200:
             return jsonify({'error': f'WaveSpeed error: {response.text}'}), response.status_code
         
-        # Обработка ответа: может быть JSON с base64 или бинарные данные
+        # Обработка ответа
         content_type = response.headers.get("Content-Type", "")
         print(f"Response content type: {content_type}")
         
@@ -90,10 +90,10 @@ def generate():
             data = response.json()
             print(f"JSON response keys: {list(data.keys())}")
             
-            # Пробуем разные возможные поля с изображением
-            img_b64 = None
+            # Пробуем получить изображение
             if "image_base64" in data:
-                img_b64 = data.get("image_base64")
+                data_url = f"data:image/png;base64,{data['image_base64']}"
+                return jsonify({'images': [data_url, data_url]})
             elif "outputs" in data and len(data["outputs"]) > 0:
                 # Если outputs содержит URL, скачиваем его
                 img_url = data["outputs"][0]
@@ -103,10 +103,6 @@ def generate():
                 image_data = img_response.content
                 base64_image = base64.b64encode(image_data).decode('utf-8')
                 data_url = f"data:image/png;base64,{base64_image}"
-                return jsonify({'images': [data_url, data_url]})
-            
-            if img_b64:
-                data_url = f"data:image/png;base64,{img_b64}"
                 return jsonify({'images': [data_url, data_url]})
             else:
                 return jsonify({'error': 'No image data in response'}), 500
