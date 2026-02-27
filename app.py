@@ -60,8 +60,6 @@ def generate():
         if not api_key:
             return jsonify({'error': 'API key not configured'}), 500
         
-        # Прямой POST-запрос к WaveSpeed API
-        # Используем официальный эндпоинт Z-Image-Turbo
         response = requests.post(
             'https://api.wavespeed.ai/v1/z-image-turbo/generate',
             headers={
@@ -69,7 +67,7 @@ def generate():
                 'Content-Type': 'application/json'
             },
             json={
-                'prompt': prompt,  # ВАЖНО: поле называется 'prompt'
+                'prompt': prompt,
                 'size': 1024,
                 'output_format': 'png',
                 'enable_sync_mode': True
@@ -80,7 +78,6 @@ def generate():
         if response.status_code != 200:
             return jsonify({'error': f'WaveSpeed error: {response.text}'}), response.status_code
         
-        # Получаем бинарные данные изображения
         image_data = response.content
         base64_image = base64.b64encode(image_data).decode('utf-8')
         data_url = f"data:image/png;base64,{base64_image}"
