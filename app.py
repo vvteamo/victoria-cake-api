@@ -1,6 +1,5 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-import wavespeed
 import requests
 import base64
 import os
@@ -61,29 +60,29 @@ def generate():
         if not api_key:
             return jsonify({'error': 'API key not configured'}), 500
         
-        # Прямой вызов wavespeed.run (без создания клиента)
-        output = wavespeed.run(
-            "wavespeed-ai/z-image/turbo",
-            {"input": prompt}
+        # Прямой POST-запрос к WaveSpeed API
+        # Используем официальный эндпоинт Z-Image-Turbo
+        response = requests.post(
+            'https://api.wavespeed.ai/v1/z-image-turbo/generate',
+            headers={
+                'Authorization': f'Bearer {api_key}',
+                'Content-Type': 'application/json'
+            },
+            json={
+                'prompt': prompt,  # ВАЖНО: поле называется 'prompt'
+                'size': 1024,
+                'output_format': 'png',
+                'enable_sync_mode': True
+            },
+            timeout=30
         )
         
-        # Получаем URL изображения из ответа
-        # Формат ответа может отличаться, пробуем разные варианты
-        if isinstance(output, dict) and "outputs" in output:
-            image_url = output["outputs"][0]
-        elif isinstance(output, dict) and "images" in output:
-            image_url = output["images"][0]
-        elif isinstance(output, str):
-            image_url = output
-        else:
-            return jsonify({'error': 'Unexpected response format'}), 500
+        if response.status_code != 200:
+            return jsonify({'error': f'WaveSpeed error: {response.text}'}), response.status_code
         
-        # Скачиваем изображение
-        img_response = requests.get(image_url)
-        img_response.raise_for_status()
-        
-        # Конвертируем в base64 для отправки на фронтенд
-        base64_image = base64.b64encode(img_response.content).decode('utf-8')
+        # Получаем бинарные данные изображения
+        image_data = response.content
+        base64_image = base64.b64encode(image_data).decode('utf-8')
         data_url = f"data:image/png;base64,{base64_image}"
         
         return jsonify({'images': [data_url, data_url]})
