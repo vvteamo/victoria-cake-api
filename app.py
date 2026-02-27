@@ -9,42 +9,11 @@ app = Flask(__name__)
 CORS(app, origins=['*'])
 
 def build_prompt(data):
-    etages = data.get('etages', '1 étage')
-    style = data.get('style', 'Classique Chic')
-    event = data.get('event', 'Mariage')
-    guests = data.get('guests', 6)
-    hasCustomTopper = data.get('hasCustomTopper', False)
-    inscription = data.get('inscription', '')
-    wishes = data.get('wishes', '')
-    date = data.get('date', '')
-    
-    prompt = f"A luxurious {etages} tier wedding cake in {style} style. "
-    prompt += f"For a {event} event with {guests} guests. "
-    
-    if date:
-        prompt += f"The cake is needed for {date}. "
-    
-    if not hasCustomTopper:
-        prompt += ("On the top tier, an elegant golden topper stands upright. "
-                   "The topper clearly displays the name 'Victoria' in a refined serif font. "
-                   "Below the name, finely engraved, reads 'NICE, FRANCE'. "
-                   "The topper catches the light, appearing as delicate edible gold. ")
-    else:
-        prompt += ("On the edge of the marble cake stand, there is a subtle gold engraving "
-                   "that reads 'Victoria' in an elegant script. Just below, delicately engraved, "
-                   "'NICE, FRANCE'. The engraving looks like it's part of the marble, "
-                   "very refined and understated. ")
-    
-    if inscription:
-        prompt += f"On the cake, there is an inscription that says: '{inscription}'. "
-    
-    if wishes:
-        prompt += f"Additional wishes: {wishes}. "
-    
-    prompt += ("The cake is set on an elegant marble table with a blurred Mediterranean Sea background, "
-               "Nice coastline. Professional food photography, soft daylight, 8k resolution, hyper-realistic.")
-    
-    return prompt
+    # ... (функция build_prompt, она у тебя уже есть, можешь оставить как есть)
+    # (я не буду копировать её целиком, чтобы не загромождать, но она должна быть)
+    # Важно: в функции должны быть поля etages, style, event, guests, hasCustomTopper, inscription, wishes, date
+    # и возвращать prompt
+    # Убедись, что у тебя есть обработка поля date
 
 @app.route('/', methods=['GET'])
 def home():
@@ -61,33 +30,24 @@ def generate():
         if not api_key:
             return jsonify({'error': 'API key not configured'}), 500
         
-        # Инициализируем клиент Wavespeed
         client = wavespeed.Client(api_key=api_key)
-        
-        # Используем правильную модель Z-Image-Turbo
         result = client.run(
             model="wavespeed-ai/z-image-turbo",
             inputs={"prompt": prompt}
         )
         
-        # Результат может быть URL или base64
+        # result может быть URL или base64
         if isinstance(result, str) and result.startswith('http'):
-            # Если это URL, скачиваем изображение
             img_response = requests.get(result)
             img_response.raise_for_status()
             image_data = img_response.content
         elif isinstance(result, bytes):
-            # Если это уже бинарные данные
             image_data = result
         else:
-            # Если это что-то другое, пробуем преобразовать
             image_data = str(result).encode()
         
-        # Конвертируем в base64 для отправки на фронтенд
         base64_image = base64.b64encode(image_data).decode('utf-8')
         data_url = f"data:image/png;base64,{base64_image}"
-        
-        # Пока возвращаем два одинаковых (позже сделаем два разных)
         return jsonify({'images': [data_url, data_url]})
         
     except Exception as e:
