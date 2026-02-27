@@ -1,5 +1,6 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
+import wavespeed
 import requests
 import base64
 import os
@@ -8,6 +9,7 @@ app = Flask(__name__)
 CORS(app, origins=['*'])
 
 def build_prompt(data):
+    # (функция build_prompt остаётся без изменений, как в предыдущих версиях)
     etages = data.get('etages', '1 étage')
     style = data.get('style', 'Classique Chic')
     event = data.get('event', 'Mariage')
@@ -60,58 +62,39 @@ def generate():
         if not api_key:
             return jsonify({'error': 'API key not configured'}), 500
         
-        # ПРАВИЛЬНЫЙ ЭНДПОИНТ С ОФИЦИАЛЬНОЙ СТРАНИЦЫ МОДЕЛИ
-        url = "https://api.wavespeed.ai/wavespeed-ai/z-image/turbo"
-        print(f"Sending request to: {url}")
+        # Инициализируем клиент SDK
+        client = wavespeed.Client(api_key=api_key)
         
-        payload = {
-            "prompt": prompt,
-            "size": 1024,
-            "output_format": "png",
-            "enable_sync_mode": True,
-        }
+        # Запускаем модель через SDK
+        result = client.run(
+            "wavespeed-ai/z-image/turbo",
+            input={"prompt": prompt}
+        )
         
-        headers = {
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        }
+        # SDK может вернуть URL или base64
+        print(f"SDK result type: {type(result)}")
         
-        response = requests.post(url, json=payload, headers=headers, timeout=30)
-        print(f"Response status: {response.status_code}")
-        
-        if response.status_code != 200:
-            return jsonify({'error': f'WaveSpeed error: {response.text}'}), response.status_code
-        
-        # Обработка ответа
-        content_type = response.headers.get("Content-Type", "")
-        print(f"Response content type: {content_type}")
-        
-        if "application/json" in content_type:
-            data = response.json()
-            print(f"JSON response keys: {list(data.keys())}")
-            
-            # Пробуем получить изображение
-            if "image_base64" in data:
-                data_url = f"data:image/png;base64,{data['image_base64']}"
-                return jsonify({'images': [data_url, data_url]})
-            elif "outputs" in data and len(data["outputs"]) > 0:
-                # Если outputs содержит URL, скачиваем его
-                img_url = data["outputs"][0]
-                print(f"Got image URL: {img_url}")
-                img_response = requests.get(img_url)
-                img_response.raise_for_status()
-                image_data = img_response.content
-                base64_image = base64.b64encode(image_data).decode('utf-8')
-                data_url = f"data:image/png;base64,{base64_image}"
-                return jsonify({'images': [data_url, data_url]})
-            else:
-                return jsonify({'error': 'No image data in response'}), 500
-        else:
-            # Прямые бинарные данные
-            image_data = response.content
+        # Если результат — строка и похожа на URL
+        if isinstance(result, str) and result.startswith('http'):
+            img_response = requests.get(result)
+            img_response.raise_for_status()
+            image_data = img_response.content
             base64_image = base64.b64encode(image_data).decode('utf-8')
             data_url = f"data:image/png;base64,{base64_image}"
             return jsonify({'images': [data_url, data_url]})
+        
+        # Если результат — словарь с base64
+        elif isinstance(result, dict) and 'image_base64' in result:
+            data_url = f"data:image/png;base64,{result['image_base64']}"
+            return jsonify({'images': [data_url, data_url]})
+        
+        # Если результат — уже base64 строка
+        elif isinstance(result, str):
+            data_url = f"data:image/png;base64,{result}"
+            return jsonify({'images': [data_url, data_url]})
+        
+        else:
+            return jsonify({'error': f'Unexpected SDK result: {result}'}), 500
         
     except Exception as e:
         print(f"Error: {str(e)}")
