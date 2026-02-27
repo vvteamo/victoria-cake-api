@@ -25,16 +25,13 @@ def build_prompt(data, creative=False):
     if inscription:
         prompt += f", with inscription '{inscription}'"
     
-    # Брендирование
     if not hasCustomTopper:
         prompt += ". On top, an elegant gold topper that reads 'Victoria' and 'NICE, FRANCE' below"
     else:
         prompt += ". On the marble base, a subtle gold engraving 'Victoria' and 'NICE, FRANCE'"
     
-    # Фон и качество
     prompt += ". Marble table, blurred Mediterranean Sea background, Nice coastline. 8k, sharp focus, detailed texture, soft daylight."
     
-    # Для креативного варианта добавляем небольшие изменения
     if creative:
         prompt += " Slightly more artistic interpretation."
     
@@ -52,7 +49,6 @@ def generate():
         if not api_key:
             return jsonify({'error': 'API key not configured'}), 500
         
-        # Создаём клиент с настройками надёжности
         client = wavespeed.Client(
             api_key=api_key,
             max_retries=3,
@@ -62,14 +58,13 @@ def generate():
         
         images = []
         
-        # Проверяем, есть ли загруженное фото (второй путь)
         if 'image_base64' in data:
             # === ВТОРОЙ ПУТЬ: редактирование фото ===
             prompt = data.get('wishes', '')
             if not prompt:
                 return jsonify({'error': 'Veuillez décrire les modifications souhaitées'}), 400
             
-            # Сохраняем base64 во временный файл для upload()
+            # Сохраняем base64 во временный файл
             with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as f:
                 f.write(base64.b64decode(data['image_base64']))
                 temp_path = f.name
@@ -78,21 +73,26 @@ def generate():
                 # Загружаем фото, получаем URL
                 image_url = wavespeed.upload(temp_path)
                 
-                # Запускаем генерацию с фото-референсом
-                strength = data.get('strength', 0.4)  # по умолчанию небольшие правки
+                # ТОЧНЫЙ ВАРИАНТ: минимальные изменения (strength = 0.2)
+                # Промпт явно указывает сохранить всё, изменить только цвет/указанное
+                full_prompt = (
+                    f"{prompt}. IMPORTANT: Keep the exact same cake design, shape, decorations, and composition. "
+                    f"Only change the color to {prompt.lower()} as specified. Do NOT add any cartoon effects, do NOT change the style. "
+                    f"Make the result photorealistic, high quality, indistinguishable from a real cake photo."
+                )
+                
                 result = client.run(
                     "wavespeed-ai/z-image/turbo",
                     {
                         "image": image_url,
-                        "prompt": prompt,
-                        "strength": strength
+                        "prompt": full_prompt,
+                        "strength": 0.2   # минимальная сила изменений
                     }
                 )
                 
-                # Обрабатываем результат
                 if isinstance(result, dict) and 'outputs' in result:
-                    image_url = result['outputs'][0]
-                    img_response = requests.get(image_url)
+                    img_url = result['outputs'][0]
+                    img_response = requests.get(img_url)
                     img_response.raise_for_status()
                     base64_image = base64.b64encode(img_response.content).decode('utf-8')
                     data_url = f"data:image/png;base64,{base64_image}"
@@ -101,12 +101,10 @@ def generate():
                     return jsonify({'error': f'Unexpected SDK result: {result}'}), 500
                     
             finally:
-                # Удаляем временный файл
                 os.unlink(temp_path)
             
         else:
             # === ПЕРВЫЙ ПУТЬ: генерация с нуля ===
-            # Генерируем два разных изображения
             for creative in [False, True]:
                 prompt = build_prompt(data, creative=creative)
                 print(f"Prompt ({'creative' if creative else 'standard'}): {prompt}")
@@ -117,8 +115,8 @@ def generate():
                 )
                 
                 if isinstance(result, dict) and 'outputs' in result:
-                    image_url = result['outputs'][0]
-                    img_response = requests.get(image_url)
+                    img_url = result['outputs'][0]
+                    img_response = requests.get(img_url)
                     img_response.raise_for_status()
                     base64_image = base64.b64encode(img_response.content).decode('utf-8')
                     data_url = f"data:image/png;base64,{base64_image}"
