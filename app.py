@@ -4,11 +4,13 @@ import wavespeed
 import requests
 import base64
 import os
+import tempfile
 
 app = Flask(__name__)
 CORS(app, origins=['*'])
 
-def build_prompt(data):
+def build_prompt(data, creative=False):
+    """Формирует промпт для text-to-image (первый путь)"""
     etages = data.get('etages', '1 étage')
     style = data.get('style', 'Classique Chic')
     event = data.get('event', 'Mariage')
@@ -18,31 +20,23 @@ def build_prompt(data):
     wishes = data.get('wishes', '')
     date = data.get('date', '')
     
-    prompt = f"A luxurious {etages} tier wedding cake in {style} style. "
-    prompt += f"For a {event} event with {guests} guests. "
-    
-    if date:
-        prompt += f"The cake is needed for {date}. "
-    
-    if not hasCustomTopper:
-        prompt += ("On the top tier, an elegant golden topper stands upright. "
-                   "The topper clearly displays the name 'Victoria' in a refined serif font. "
-                   "Below the name, finely engraved, reads 'NICE, FRANCE'. "
-                   "The topper catches the light, appearing as delicate edible gold. ")
-    else:
-        prompt += ("On the edge of the marble cake stand, there is a subtle gold engraving "
-                   "that reads 'Victoria' in an elegant script. Just below, delicately engraved, "
-                   "'NICE, FRANCE'. The engraving looks like it's part of the marble, "
-                   "very refined and understated. ")
+    prompt = f"Photorealistic professional shot of a {etages} tier wedding cake, {style} style, decorated with fresh flowers"
     
     if inscription:
-        prompt += f"On the cake, there is an inscription that says: '{inscription}'. "
+        prompt += f", with inscription '{inscription}'"
     
-    if wishes:
-        prompt += f"Additional wishes: {wishes}. "
+    # Брендирование
+    if not hasCustomTopper:
+        prompt += ". On top, an elegant gold topper that reads 'Victoria' and 'NICE, FRANCE' below"
+    else:
+        prompt += ". On the marble base, a subtle gold engraving 'Victoria' and 'NICE, FRANCE'"
     
-    prompt += ("The cake is set on an elegant marble table with a blurred Mediterranean Sea background, "
-               "Nice coastline. Professional food photography, soft daylight, 8k resolution, hyper-realistic.")
+    # Фон и качество
+    prompt += ". Marble table, blurred Mediterranean Sea background, Nice coastline. 8k, sharp focus, detailed texture, soft daylight."
+    
+    # Для креативного варианта добавляем небольшие изменения
+    if creative:
+        prompt += " Slightly more artistic interpretation."
     
     return prompt
 
@@ -54,61 +48,85 @@ def home():
 def generate():
     try:
         data = request.json
-        prompt = build_prompt(data)
-        print(f"Prompt: {prompt}")
-        
         api_key = os.environ.get('WAVESPEED_API_KEY')
         if not api_key:
             return jsonify({'error': 'API key not configured'}), 500
         
-        # Инициализируем клиент SDK
-        client = wavespeed.Client(api_key=api_key)
-        
-        # Запускаем модель через SDK
-        result = client.run(
-            "wavespeed-ai/z-image/turbo",
-            input={"prompt": prompt}
+        # Создаём клиент с настройками надёжности
+        client = wavespeed.Client(
+            api_key=api_key,
+            max_retries=3,
+            max_connection_retries=5,
+            retry_interval=1.0
         )
         
-        print(f"SDK result: {result}")
-        print(f"Result type: {type(result)}")
+        images = []
         
-        # Обрабатываем результат
-        if isinstance(result, dict) and 'outputs' in result:
-            # Получаем первый URL из outputs
-            image_url = result['outputs'][0]
-            print(f"Got image URL: {image_url}")
+        # Проверяем, есть ли загруженное фото (второй путь)
+        if 'image_base64' in data:
+            # === ВТОРОЙ ПУТЬ: редактирование фото ===
+            prompt = data.get('wishes', '')
+            if not prompt:
+                return jsonify({'error': 'Veuillez décrire les modifications souhaitées'}), 400
             
-            # Скачиваем изображение
-            img_response = requests.get(image_url)
-            img_response.raise_for_status()
+            # Сохраняем base64 во временный файл для upload()
+            with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as f:
+                f.write(base64.b64decode(data['image_base64']))
+                temp_path = f.name
             
-            # Конвертируем в base64
-            image_data = img_response.content
-            base64_image = base64.b64encode(image_data).decode('utf-8')
-            data_url = f"data:image/png;base64,{base64_image}"
-            
-            return jsonify({'images': [data_url, data_url]})
-            
-        elif isinstance(result, str) and result.startswith('http'):
-            # Прямой URL
-            img_response = requests.get(result)
-            img_response.raise_for_status()
-            image_data = img_response.content
-            base64_image = base64.b64encode(image_data).decode('utf-8')
-            data_url = f"data:image/png;base64,{base64_image}"
-            return jsonify({'images': [data_url, data_url]})
-            
-        elif isinstance(result, dict) and 'image_base64' in result:
-            data_url = f"data:image/png;base64,{result['image_base64']}"
-            return jsonify({'images': [data_url, data_url]})
-            
-        elif isinstance(result, str):
-            data_url = f"data:image/png;base64,{result}"
-            return jsonify({'images': [data_url, data_url]})
+            try:
+                # Загружаем фото, получаем URL
+                image_url = wavespeed.upload(temp_path)
+                
+                # Запускаем генерацию с фото-референсом
+                strength = data.get('strength', 0.4)  # по умолчанию небольшие правки
+                result = client.run(
+                    "wavespeed-ai/z-image/turbo",
+                    {
+                        "image": image_url,
+                        "prompt": prompt,
+                        "strength": strength
+                    }
+                )
+                
+                # Обрабатываем результат
+                if isinstance(result, dict) and 'outputs' in result:
+                    image_url = result['outputs'][0]
+                    img_response = requests.get(image_url)
+                    img_response.raise_for_status()
+                    base64_image = base64.b64encode(img_response.content).decode('utf-8')
+                    data_url = f"data:image/png;base64,{base64_image}"
+                    images.append(data_url)
+                else:
+                    return jsonify({'error': f'Unexpected SDK result: {result}'}), 500
+                    
+            finally:
+                # Удаляем временный файл
+                os.unlink(temp_path)
             
         else:
-            return jsonify({'error': f'Unexpected SDK result: {result}'}), 500
+            # === ПЕРВЫЙ ПУТЬ: генерация с нуля ===
+            # Генерируем два разных изображения
+            for creative in [False, True]:
+                prompt = build_prompt(data, creative=creative)
+                print(f"Prompt ({'creative' if creative else 'standard'}): {prompt}")
+                
+                result = client.run(
+                    "wavespeed-ai/z-image/turbo",
+                    {"prompt": prompt}
+                )
+                
+                if isinstance(result, dict) and 'outputs' in result:
+                    image_url = result['outputs'][0]
+                    img_response = requests.get(image_url)
+                    img_response.raise_for_status()
+                    base64_image = base64.b64encode(img_response.content).decode('utf-8')
+                    data_url = f"data:image/png;base64,{base64_image}"
+                    images.append(data_url)
+                else:
+                    return jsonify({'error': f'Unexpected SDK result: {result}'}), 500
+        
+        return jsonify({'images': images})
         
     except Exception as e:
         print(f"Error: {str(e)}")
