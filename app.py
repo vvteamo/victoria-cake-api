@@ -9,7 +9,6 @@ app = Flask(__name__)
 CORS(app, origins=['*'])
 
 def build_prompt(data):
-    # (функция build_prompt остаётся без изменений, как в предыдущих версиях)
     etages = data.get('etages', '1 étage')
     style = data.get('style', 'Classique Chic')
     event = data.get('event', 'Mariage')
@@ -71,28 +70,43 @@ def generate():
             input={"prompt": prompt}
         )
         
-        # SDK может вернуть URL или base64
-        print(f"SDK result type: {type(result)}")
+        print(f"SDK result: {result}")
+        print(f"Result type: {type(result)}")
         
-        # Если результат — строка и похожа на URL
-        if isinstance(result, str) and result.startswith('http'):
+        # Обрабатываем результат
+        if isinstance(result, dict) and 'outputs' in result:
+            # Получаем первый URL из outputs
+            image_url = result['outputs'][0]
+            print(f"Got image URL: {image_url}")
+            
+            # Скачиваем изображение
+            img_response = requests.get(image_url)
+            img_response.raise_for_status()
+            
+            # Конвертируем в base64
+            image_data = img_response.content
+            base64_image = base64.b64encode(image_data).decode('utf-8')
+            data_url = f"data:image/png;base64,{base64_image}"
+            
+            return jsonify({'images': [data_url, data_url]})
+            
+        elif isinstance(result, str) and result.startswith('http'):
+            # Прямой URL
             img_response = requests.get(result)
             img_response.raise_for_status()
             image_data = img_response.content
             base64_image = base64.b64encode(image_data).decode('utf-8')
             data_url = f"data:image/png;base64,{base64_image}"
             return jsonify({'images': [data_url, data_url]})
-        
-        # Если результат — словарь с base64
+            
         elif isinstance(result, dict) and 'image_base64' in result:
             data_url = f"data:image/png;base64,{result['image_base64']}"
             return jsonify({'images': [data_url, data_url]})
-        
-        # Если результат — уже base64 строка
+            
         elif isinstance(result, str):
             data_url = f"data:image/png;base64,{result}"
             return jsonify({'images': [data_url, data_url]})
-        
+            
         else:
             return jsonify({'error': f'Unexpected SDK result: {result}'}), 500
         
