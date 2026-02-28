@@ -35,7 +35,6 @@ def build_prompt(data, creative=False):
     if inscription:
         prompt += f", with inscription '{inscription}'"
     
-    # Брендирование: топпер или подложка
     if not hasCustomTopper:
         prompt += ". On top, an elegant gold topper that reads 'Victoria' and 'NICE, FRANCE' below"
     else:
@@ -53,7 +52,8 @@ def analyze_image_with_hf(image_path):
     if not HF_API_KEY:
         raise Exception("HF_API_KEY not configured")
     
-    API_URL = "https://api-inference.huggingface.co/models/Salesforce/blip-image-captioning-base"
+    # ИСПРАВЛЕНО: используем работающую модель
+    API_URL = "https://api-inference.huggingface.co/models/nlpconnect/vit-gpt2-image-captioning"
     headers = {"Authorization": f"Bearer {HF_API_KEY}"}
     
     with open(image_path, "rb") as f:
@@ -65,12 +65,16 @@ def analyze_image_with_hf(image_path):
         raise Exception(f"Hugging Face API error: {response.status_code} - {response.text}")
     
     result = response.json()
+    # Разные модели возвращают результат в разных форматах
     if isinstance(result, list) and len(result) > 0:
-        return result[0].get('generated_text', '')
+        if 'generated_text' in result[0]:
+            return result[0].get('generated_text', '')
+        elif isinstance(result[0], dict) and 'caption' in result[0]:
+            return result[0].get('caption', '')
     elif isinstance(result, dict) and 'generated_text' in result:
         return result['generated_text']
-    else:
-        raise Exception(f"Unexpected Hugging Face response: {result}")
+    
+    return str(result)
 
 @app.route('/', methods=['GET'])
 def home():
@@ -83,7 +87,6 @@ def generate():
         if not WAVESPEED_API_KEY:
             return jsonify({'error': 'WAVESPEED_API_KEY not configured'}), 500
         
-        # Исправлено: убраны неподдерживаемые параметры
         client = wavespeed.Client(api_key=WAVESPEED_API_KEY)
         
         images = []
