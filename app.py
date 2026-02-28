@@ -52,8 +52,8 @@ def analyze_image_with_hf(image_path):
     if not HF_API_KEY:
         raise Exception("HF_API_KEY not configured")
     
-    # ИСПРАВЛЕНО: используем более стабильную модель BLIP
-    API_URL = "https://router.huggingface.co/hf-inference/models/Salesforce/blip-image-captioning-base"
+    # ИСПРАВЛЕНО: используем универсальный эндпоинт
+    API_URL = "https://router.huggingface.co/models/Salesforce/blip-image-captioning-base"
     headers = {"Authorization": f"Bearer {HF_API_KEY}"}
     
     with open(image_path, "rb") as f:
