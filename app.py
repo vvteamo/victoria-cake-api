@@ -35,6 +35,7 @@ def build_prompt(data, creative=False):
     if inscription:
         prompt += f", with inscription '{inscription}'"
     
+    # Брендирование: топпер или подложка
     if not hasCustomTopper:
         prompt += ". On top, an elegant gold topper that reads 'Victoria' and 'NICE, FRANCE' below"
     else:
@@ -82,12 +83,8 @@ def generate():
         if not WAVESPEED_API_KEY:
             return jsonify({'error': 'WAVESPEED_API_KEY not configured'}), 500
         
-        client = wavespeed.Client(
-            api_key=WAVESPEED_API_KEY,
-            max_retries=3,
-            max_connection_retries=5,
-            retry_interval=1.0
-        )
+        # Исправлено: убраны неподдерживаемые параметры
+        client = wavespeed.Client(api_key=WAVESPEED_API_KEY)
         
         images = []
         
