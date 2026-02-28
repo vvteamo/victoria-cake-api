@@ -5,10 +5,16 @@ import requests
 import base64
 import os
 import tempfile
-from deep_translator import GoogleTranslator
+from transformers import pipeline
+from PIL import Image
 
 app = Flask(__name__)
 CORS(app, origins=['*'])
+
+# Инициализируем модель для распознавания изображений (загружается один раз при старте)
+print("Loading image captioning model...")
+captioner = pipeline("image-to-text", model="Salesforce/blip-image-captioning-base")
+print("Model loaded successfully!")
 
 def build_prompt(data, creative=False):
     """Формирует промпт для text-to-image (первый путь)"""
@@ -39,6 +45,19 @@ def build_prompt(data, creative=False):
     
     return prompt
 
+def analyze_image(image_path):
+    """
+    Анализирует изображение и возвращает текстовое описание
+    """
+    try:
+        image = Image.open(image_path)
+        result = captioner(image)
+        description = result[0]['generated_text']
+        return description
+    except Exception as e:
+        print(f"Error analyzing image: {e}")
+        return None
+
 @app.route('/', methods=['GET'])
 def home():
     return "API de génération de gâteaux Victoria fonctionne !"
@@ -61,57 +80,10 @@ def generate():
         images = []
         
         if 'image_base64' in data:
-            # === ВТОРОЙ ПУТЬ: редактирование фото ===
-            user_prompt = data.get('wishes', '')  # запрос на любом языке
+            # === ВТОРОЙ ПУТЬ: анализ фото + генерация с нуля ===
+            user_prompt = data.get('wishes', '')
             if not user_prompt:
                 return jsonify({'error': 'Veuillez décrire les modifications souhaitées'}), 400
-            
-            # --- ПЕРЕВОД НА АНГЛИЙСКИЙ ---
-            try:
-                translator = GoogleTranslator(source='auto', target='en')
-                prompt_en = translator.translate(user_prompt).lower()
-                print(f"Original: {user_prompt}")
-                print(f"Translated (EN): {prompt_en}")
-            except Exception as e:
-                prompt_en = user_prompt.lower()
-                print(f"Translation failed, using original: {prompt_en}")
-            
-            # --- Брендирование (обязательное для второго пути) ---
-            branding = (
-                "IMPORTANT: On the marble cake stand, there MUST be a subtle gold engraving "
-                "that clearly reads 'Victoria' and 'NICE, FRANCE' below. The engraving should look like part of the marble, "
-                "elegant and refined. This is a mandatory element."
-            )
-            
-            # --- Умеренная сила изменений, чтобы избежать мультяшности ---
-            strength = 0.55  # единое значение для всех случаев во втором пути
-            
-            # --- Формирование промпта на основе анализа переведённого запроса ---
-            # Запрос на изменение цвета
-            if any(word in prompt_en for word in ['color', 'colour', 'couleur', 'make it', 'turn it']):
-                full_prompt = (
-                    f"{prompt_en}. IMPORTANT: Change the cake's color as requested. "
-                    f"Keep the exact same shape, decorations, and composition. "
-                    f"Only the color should change. Do NOT add or remove any decorative elements. "
-                    f"Ensure the result is photorealistic, high quality, 8k, detailed texture, NO cartoon, NO artistic interpretation. "
-                    f"{branding}"
-                )
-            # Запрос на добавление элементов
-            elif any(word in prompt_en for word in ['add', 'with', 'put', 'place', 'decorate', 'ajouter', 'avec']):
-                full_prompt = (
-                    f"{prompt_en}. IMPORTANT: Keep the original cake's shape and color exactly the same. "
-                    f"Add the new element(s) as requested. The new element should look natural and photorealistic. "
-                    f"Do NOT change the existing decorations, do NOT change the cake's color. "
-                    f"Ensure the result is photorealistic, high quality, 8k, detailed texture, NO cartoon, NO artistic interpretation. "
-                    f"{branding}"
-                )
-            # Другие запросы
-            else:
-                full_prompt = (
-                    f"{prompt_en}. IMPORTANT: Keep the original cake's design as much as possible. "
-                    f"Apply the changes requested. Ensure the result is photorealistic, high quality, 8k, detailed texture, NO cartoon, NO artistic interpretation. "
-                    f"{branding}"
-                )
             
             # Сохраняем base64 во временный файл
             with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as f:
@@ -119,16 +91,27 @@ def generate():
                 temp_path = f.name
             
             try:
-                # Загружаем фото, получаем URL
-                image_url = wavespeed.upload(temp_path)
+                # ШАГ 1: Анализируем изображение
+                print("Analyzing reference image...")
+                image_description = analyze_image(temp_path)
+                if not image_description:
+                    return jsonify({'error': 'Failed to analyze the reference image'}), 500
+                print(f"Image description: {image_description}")
                 
+                # ШАГ 2: Формируем промпт для генерации
+                # Берём описание изображения и добавляем пожелания пользователя
+                full_prompt = f"{image_description}. {user_prompt}. IMPORTANT: Keep the same cake shape and decorations. Make it photorealistic, high quality, 8k, detailed texture, NO cartoon, NO artistic interpretation."
+                
+                # Добавляем брендирование (как в первом пути)
+                full_prompt += " On the marble base, a subtle gold engraving 'Victoria' and 'NICE, FRANCE'"
+                full_prompt += ". Marble table, blurred Mediterranean Sea background, Nice coastline. Professional food photography, soft daylight, 8k, hyper-realistic."
+                
+                print(f"Final generation prompt: {full_prompt}")
+                
+                # ШАГ 3: Генерируем новое изображение (первый путь)
                 result = client.run(
                     "wavespeed-ai/z-image/turbo",
-                    {
-                        "image": image_url,
-                        "prompt": full_prompt,
-                        "strength": strength
-                    }
+                    {"prompt": full_prompt}
                 )
                 
                 if isinstance(result, dict) and 'outputs' in result:
@@ -145,7 +128,7 @@ def generate():
                 os.unlink(temp_path)
             
         else:
-            # === ПЕРВЫЙ ПУТЬ: генерация с нуля ===
+            # === ПЕРВЫЙ ПУТЬ: генерация с нуля (без изменений) ===
             for creative in [False, True]:
                 prompt = build_prompt(data, creative=creative)
                 print(f"Prompt ({'creative' if creative else 'standard'}): {prompt}")
