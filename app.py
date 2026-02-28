@@ -105,27 +105,38 @@ def send_order():
     """
     try:
         data = request.json
+        print("=== SEND-ORDER DEBUG ===")
+        print("Received data:", data)
+        
         required = ['image_base64', 'name', 'contact', 'order_details', 'selected_design']
         for field in required:
             if field not in data:
+                print(f"Missing field: {field}")
                 return jsonify({'error': f'Missing field: {field}'}), 400
+            print(f"Field '{field}' present: {data[field][:50]}..." if field == 'image_base64' else f"Field '{field}' present: {data[field]}")
         
         # Проверяем наличие ключей
         if not WHATSAPP_PHONE_ID or not WHATSAPP_TOKEN:
+            print("WhatsApp credentials not configured")
             return jsonify({'error': 'WhatsApp credentials not configured'}), 500
+        
+        print(f"WHATSAPP_PHONE_ID: {WHATSAPP_PHONE_ID}")
+        print(f"WHATSAPP_TOKEN present: {'Yes' if WHATSAPP_TOKEN else 'No'}")
         
         # Извлекаем бинарные данные из base64
         image_base64 = data['image_base64']
         if ',' in image_base64:
             image_base64 = image_base64.split(',')[1]
         image_data = base64.b64decode(image_base64)
+        print(f"Image data size: {len(image_data)} bytes")
         
         # Сохраняем во временный файл
         with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp:
             tmp.write(image_data)
             tmp_path = tmp.name
+        print(f"Temp file created: {tmp_path}")
         
-        # Загружаем медиа в WhatsApp (исправлено: добавлен messaging_product)
+        # Загружаем медиа в WhatsApp
         upload_url = f'https://graph.facebook.com/v17.0/{WHATSAPP_PHONE_ID}/media'
         headers = {'Authorization': f'Bearer {WHATSAPP_TOKEN}'}
         
@@ -136,11 +147,14 @@ def send_order():
             upload_resp = requests.post(upload_url, headers=headers, files=files, data=data)
         
         os.unlink(tmp_path)
+        print(f"Upload response status: {upload_resp.status_code}")
         
         if upload_resp.status_code != 200:
+            print(f"Upload error: {upload_resp.text}")
             return jsonify({'error': f'WhatsApp media upload failed: {upload_resp.text}'}), 500
         
         media_id = upload_resp.json()['id']
+        print(f"Media ID: {media_id}")
         
         # Формируем подпись
         caption = (
@@ -151,8 +165,9 @@ def send_order():
             f"✨ *Design choisi:* {data['selected_design']}\n\n"
             f"_En attente de validation par le Chef._"
         )
+        print(f"Caption length: {len(caption)} chars")
         
-        # Отправляем сообщение с изображением на номер Виктории (исправлено)
+        # Отправляем сообщение с изображением на номер Виктории
         message_url = f'https://graph.facebook.com/v17.0/{WHATSAPP_PHONE_ID}/messages'
         message_body = {
             "messaging_product": "whatsapp",  # обязательно
@@ -165,16 +180,21 @@ def send_order():
         }
         
         msg_resp = requests.post(message_url, headers=headers, json=message_body)
+        print(f"Message response status: {msg_resp.status_code}")
         
         if msg_resp.status_code != 200:
+            print(f"Message error: {msg_resp.text}")
             return jsonify({'error': f'WhatsApp message send failed: {msg_resp.text}'}), 500
         
         msg_id = msg_resp.json().get('messages', [{}])[0].get('id')
+        print(f"Message sent, ID: {msg_id}")
         
         return jsonify({'success': True, 'message_id': msg_id})
         
     except Exception as e:
         print(f"Send order error: {str(e)}")
+        import traceback
+        traceback.print_exc()
         return jsonify({'error': str(e)}), 500
 
 if __name__ == '__main__':
