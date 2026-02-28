@@ -35,6 +35,7 @@ def build_prompt(data, creative=False):
     if inscription:
         prompt += f", with inscription '{inscription}'"
     
+    # Брендирование: топпер или подложка
     if not hasCustomTopper:
         prompt += ". On top, an elegant gold topper that reads 'Victoria' and 'NICE, FRANCE' below"
     else:
@@ -52,8 +53,8 @@ def analyze_image_with_hf(image_path):
     if not HF_API_KEY:
         raise Exception("HF_API_KEY not configured")
     
-    # ИСПРАВЛЕНО: используем работающую модель
-    API_URL = "https://api-inference.huggingface.co/models/nlpconnect/vit-gpt2-image-captioning"
+    # ИСПРАВЛЕНО: новый URL Hugging Face API (router вместо inference)
+    API_URL = "https://router.huggingface.co/hf-inference/models/nlpconnect/vit-gpt2-image-captioning"
     headers = {"Authorization": f"Bearer {HF_API_KEY}"}
     
     with open(image_path, "rb") as f:
@@ -87,6 +88,7 @@ def generate():
         if not WAVESPEED_API_KEY:
             return jsonify({'error': 'WAVESPEED_API_KEY not configured'}), 500
         
+        # ИСПРАВЛЕНО: убраны неподдерживаемые параметры max_retries и др.
         client = wavespeed.Client(api_key=WAVESPEED_API_KEY)
         
         images = []
@@ -97,7 +99,7 @@ def generate():
             if not user_prompt:
                 return jsonify({'error': 'Veuillez décrire les modifications souhaitées'}), 400
             
-            # Переводим пожелания
+            # Переводим пожелания на английский
             try:
                 translator = GoogleTranslator(source='auto', target='en')
                 user_prompt_en = translator.translate(user_prompt)
@@ -107,18 +109,18 @@ def generate():
                 user_prompt_en = user_prompt
                 print(f"Translation failed: {e}")
             
-            # Сохраняем фото
+            # Сохраняем фото во временный файл
             with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as f:
                 f.write(base64.b64decode(data['image_base64']))
                 temp_path = f.name
             
             try:
-                # Анализируем фото
+                # Анализируем фото через Hugging Face
                 print("Analyzing image with Hugging Face...")
                 image_description = analyze_image_with_hf(temp_path)
                 print(f"Description: {image_description}")
                 
-                # Формируем промпт
+                # Формируем промпт для генерации
                 full_prompt = (
                     f"{image_description}. {user_prompt_en}. "
                     f"IMPORTANT: Keep the same cake shape and decorations. "
@@ -129,7 +131,7 @@ def generate():
                 )
                 print(f"Final prompt: {full_prompt}")
                 
-                # Генерируем
+                # Генерируем новое изображение через Wavespeed
                 result = client.run(
                     "wavespeed-ai/z-image/turbo",
                     {"prompt": full_prompt}
