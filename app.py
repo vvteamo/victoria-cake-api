@@ -74,10 +74,9 @@ def generate():
                 image_url = wavespeed.upload(temp_path)
                 
                 # ТОЧНЫЙ ВАРИАНТ: минимальные изменения (strength = 0.2)
-                # Промпт явно указывает сохранить всё, изменить только цвет/указанное
                 full_prompt = (
                     f"{prompt}. IMPORTANT: Keep the exact same cake design, shape, decorations, and composition. "
-                    f"Only change the color to {prompt.lower()} as specified. Do NOT add any cartoon effects, do NOT change the style. "
+                    f"Only change the color or detail as specified. Do NOT add any cartoon effects, do NOT change the style. "
                     f"Make the result photorealistic, high quality, indistinguishable from a real cake photo."
                 )
                 
@@ -86,7 +85,7 @@ def generate():
                     {
                         "image": image_url,
                         "prompt": full_prompt,
-                        "strength": 0.2   # минимальная сила изменений
+                        "strength": 0.2
                     }
                 )
                 
