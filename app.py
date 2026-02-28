@@ -5,6 +5,7 @@ import requests
 import base64
 import os
 import tempfile
+from deep_translator import GoogleTranslator
 
 app = Flask(__name__)
 CORS(app, origins=['*'])
@@ -25,6 +26,7 @@ def build_prompt(data, creative=False):
     if inscription:
         prompt += f", with inscription '{inscription}'"
     
+    # Брендирование: топпер или подложка
     if not hasCustomTopper:
         prompt += ". On top, an elegant gold topper that reads 'Victoria' and 'NICE, FRANCE' below"
     else:
@@ -60,9 +62,56 @@ def generate():
         
         if 'image_base64' in data:
             # === ВТОРОЙ ПУТЬ: редактирование фото ===
-            prompt = data.get('wishes', '')
-            if not prompt:
+            user_prompt = data.get('wishes', '')  # запрос на любом языке
+            if not user_prompt:
                 return jsonify({'error': 'Veuillez décrire les modifications souhaitées'}), 400
+            
+            # --- ПЕРЕВОД НА АНГЛИЙСКИЙ ---
+            try:
+                translator = GoogleTranslator(source='auto', target='en')
+                prompt_en = translator.translate(user_prompt).lower()
+                print(f"Original: {user_prompt}")
+                print(f"Translated (EN): {prompt_en}")
+            except Exception as e:
+                prompt_en = user_prompt.lower()
+                print(f"Translation failed, using original: {prompt_en}")
+            
+            # --- Брендирование (обязательное для второго пути) ---
+            branding = (
+                "IMPORTANT: On the marble cake stand, there MUST be a subtle gold engraving "
+                "that clearly reads 'Victoria' and 'NICE, FRANCE' below. The engraving should look like part of the marble, "
+                "elegant and refined. This is a mandatory element."
+            )
+            
+            # --- Умеренная сила изменений, чтобы избежать мультяшности ---
+            strength = 0.55  # единое значение для всех случаев во втором пути
+            
+            # --- Формирование промпта на основе анализа переведённого запроса ---
+            # Запрос на изменение цвета
+            if any(word in prompt_en for word in ['color', 'colour', 'couleur', 'make it', 'turn it']):
+                full_prompt = (
+                    f"{prompt_en}. IMPORTANT: Change the cake's color as requested. "
+                    f"Keep the exact same shape, decorations, and composition. "
+                    f"Only the color should change. Do NOT add or remove any decorative elements. "
+                    f"Ensure the result is photorealistic, high quality, 8k, detailed texture, NO cartoon, NO artistic interpretation. "
+                    f"{branding}"
+                )
+            # Запрос на добавление элементов
+            elif any(word in prompt_en for word in ['add', 'with', 'put', 'place', 'decorate', 'ajouter', 'avec']):
+                full_prompt = (
+                    f"{prompt_en}. IMPORTANT: Keep the original cake's shape and color exactly the same. "
+                    f"Add the new element(s) as requested. The new element should look natural and photorealistic. "
+                    f"Do NOT change the existing decorations, do NOT change the cake's color. "
+                    f"Ensure the result is photorealistic, high quality, 8k, detailed texture, NO cartoon, NO artistic interpretation. "
+                    f"{branding}"
+                )
+            # Другие запросы
+            else:
+                full_prompt = (
+                    f"{prompt_en}. IMPORTANT: Keep the original cake's design as much as possible. "
+                    f"Apply the changes requested. Ensure the result is photorealistic, high quality, 8k, detailed texture, NO cartoon, NO artistic interpretation. "
+                    f"{branding}"
+                )
             
             # Сохраняем base64 во временный файл
             with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as f:
@@ -73,19 +122,12 @@ def generate():
                 # Загружаем фото, получаем URL
                 image_url = wavespeed.upload(temp_path)
                 
-                # ТОЧНЫЙ ВАРИАНТ: минимальные изменения (strength = 0.2)
-                full_prompt = (
-                    f"{prompt}. IMPORTANT: Keep the exact same cake design, shape, decorations, and composition. "
-                    f"Only change the color or detail as specified. Do NOT add any cartoon effects, do NOT change the style. "
-                    f"Make the result photorealistic, high quality, indistinguishable from a real cake photo."
-                )
-                
                 result = client.run(
                     "wavespeed-ai/z-image/turbo",
                     {
                         "image": image_url,
                         "prompt": full_prompt,
-                        "strength": 0.2
+                        "strength": strength
                     }
                 )
                 
