@@ -156,13 +156,13 @@ def send_order():
         media_id = upload_resp.json()['id']
         print(f"Media ID: {media_id}")
         
-        # Формируем подпись
+        # Формируем подпись (ИСПРАВЛЕНО: используем .get() для безопасности)
         caption = (
             f"📦 *Nouvelle commande*\n\n"
-            f"👤 *Nom:* {data['name']}\n"
-            f"📱 *Contact:* {data['contact']}\n"
-            f"📝 *Détails:*\n{data['order_details']}\n"
-            f"✨ *Design choisi:* {data['selected_design']}\n\n"
+            f"👤 *Nom:* {data.get('name', 'Non spécifié')}\n"
+            f"📱 *Contact:* {data.get('contact', 'Non spécifié')}\n"
+            f"📝 *Détails:*\n{data.get('order_details', 'Non spécifié')}\n"
+            f"✨ *Design choisi:* {data.get('selected_design', 'Non spécifié')}\n\n"
             f"_En attente de validation par le Chef._"
         )
         print(f"Caption length: {len(caption)} chars")
