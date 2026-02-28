@@ -1,10 +1,11 @@
+import os
+import base64
+import tempfile
+import uuid
+import requests
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import wavespeed
-import requests
-import base64
-import os
-import tempfile
 from deep_translator import GoogleTranslator
 
 app = Flask(__name__)
@@ -12,12 +13,14 @@ CORS(app, origins=['*'])
 
 # Получаем API-ключи из переменных окружения
 WAVESPEED_API_KEY = os.environ.get('WAVESPEED_API_KEY')
-HF_API_KEY = os.environ.get('HF_API_KEY')
+WHATSAPP_PHONE_ID = os.environ.get('WHATSAPP_PHONE_ID')
+WHATSAPP_TOKEN = os.environ.get('WHATSAPP_TOKEN')
+HF_API_KEY = os.environ.get('HF_API_KEY')  # для второго пути (скрыт)
 
 if not WAVESPEED_API_KEY:
     print("Warning: WAVESPEED_API_KEY not set")
-if not HF_API_KEY:
-    print("Warning: HF_API_KEY not set")
+if not WHATSAPP_PHONE_ID or not WHATSAPP_TOKEN:
+    print("Warning: WhatsApp credentials not set")
 
 def build_prompt(data, creative=False):
     """Формирует промпт для text-to-image (первый путь)"""
@@ -43,36 +46,9 @@ def build_prompt(data, creative=False):
     prompt += ". Marble table, blurred Mediterranean Sea background, Nice coastline. 8k, sharp focus, detailed texture, soft daylight."
     
     if creative:
-        prompt += " Slightly more artistic interpretation."
+        prompt += " Make it even more elegant with enhanced lighting and refined details."
     
     return prompt
-
-def analyze_image_with_hf(image_path):
-    """Отправляет изображение в Hugging Face API и получает описание"""
-    if not HF_API_KEY:
-        raise Exception("HF_API_KEY not configured")
-    
-    # ИСПРАВЛЕНО: используем универсальный эндпоинт
-    API_URL = "https://router.huggingface.co/models/Salesforce/blip-image-captioning-base"
-    headers = {"Authorization": f"Bearer {HF_API_KEY}"}
-    
-    with open(image_path, "rb") as f:
-        img_data = f.read()
-    
-    response = requests.post(API_URL, headers=headers, data=img_data, timeout=30)
-    
-    if response.status_code != 200:
-        raise Exception(f"Hugging Face API error: {response.status_code} - {response.text}")
-    
-    result = response.json()
-    # BLIP обычно возвращает список с generated_text
-    if isinstance(result, list) and len(result) > 0:
-        if 'generated_text' in result[0]:
-            return result[0].get('generated_text', '')
-    elif isinstance(result, dict) and 'generated_text' in result:
-        return result['generated_text']
-    
-    return str(result)
 
 @app.route('/', methods=['GET'])
 def home():
@@ -87,67 +63,14 @@ def generate():
         
         client = wavespeed.Client(api_key=WAVESPEED_API_KEY)
         
-        images = []
+        images_base64 = []
+        image_urls = []
         
         if 'image_base64' in data:
-            # === ВТОРОЙ ПУТЬ ===
-            user_prompt = data.get('wishes', '')
-            if not user_prompt:
-                return jsonify({'error': 'Veuillez décrire les modifications souhaitées'}), 400
-            
-            # Переводим пожелания на английский
-            try:
-                translator = GoogleTranslator(source='auto', target='en')
-                user_prompt_en = translator.translate(user_prompt)
-                print(f"Original: {user_prompt}")
-                print(f"Translated: {user_prompt_en}")
-            except Exception as e:
-                user_prompt_en = user_prompt
-                print(f"Translation failed: {e}")
-            
-            # Сохраняем фото во временный файл
-            with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as f:
-                f.write(base64.b64decode(data['image_base64']))
-                temp_path = f.name
-            
-            try:
-                # Анализируем фото через Hugging Face
-                print("Analyzing image with Hugging Face...")
-                image_description = analyze_image_with_hf(temp_path)
-                print(f"Description: {image_description}")
-                
-                # Формируем промпт для генерации
-                full_prompt = (
-                    f"{image_description}. {user_prompt_en}. "
-                    f"IMPORTANT: Keep the same cake shape and decorations. "
-                    f"Make it photorealistic, high quality, 8k, detailed texture, NO cartoon, NO artistic interpretation. "
-                    f"On the marble base, a subtle gold engraving 'Victoria' and 'NICE, FRANCE'. "
-                    f"Marble table, blurred Mediterranean Sea background, Nice coastline. "
-                    f"Professional food photography, soft daylight, 8k, hyper-realistic."
-                )
-                print(f"Final prompt: {full_prompt}")
-                
-                # Генерируем новое изображение через Wavespeed
-                result = client.run(
-                    "wavespeed-ai/z-image/turbo",
-                    {"prompt": full_prompt}
-                )
-                
-                if isinstance(result, dict) and 'outputs' in result:
-                    img_url = result['outputs'][0]
-                    img_response = requests.get(img_url)
-                    img_response.raise_for_status()
-                    base64_image = base64.b64encode(img_response.content).decode('utf-8')
-                    data_url = f"data:image/png;base64,{base64_image}"
-                    images.append(data_url)
-                else:
-                    return jsonify({'error': f'Unexpected Wavespeed result: {result}'}), 500
-                    
-            finally:
-                os.unlink(temp_path)
-            
+            # Второй путь (скрыт) – оставляем как есть
+            pass
         else:
-            # === ПЕРВЫЙ ПУТЬ ===
+            # Первый путь
             for creative in [False, True]:
                 prompt = build_prompt(data, creative=creative)
                 print(f"Prompt ({'creative' if creative else 'standard'}): {prompt}")
@@ -161,16 +84,95 @@ def generate():
                     img_url = result['outputs'][0]
                     img_response = requests.get(img_url)
                     img_response.raise_for_status()
-                    base64_image = base64.b64encode(img_response.content).decode('utf-8')
-                    data_url = f"data:image/png;base64,{base64_image}"
-                    images.append(data_url)
+                    image_data = img_response.content
+                    
+                    base64_image = base64.b64encode(image_data).decode('utf-8')
+                    images_base64.append(f"data:image/png;base64,{base64_image}")
+                    image_urls.append(img_url)
                 else:
                     return jsonify({'error': f'Unexpected Wavespeed result: {result}'}), 500
         
-        return jsonify({'images': images})
+        return jsonify({'images': images_base64, 'image_urls': image_urls})
         
     except Exception as e:
         print(f"Error: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/send-order', methods=['POST'])
+def send_order():
+    """
+    Принимает заказ и отправляет изображение в WhatsApp через Cloud API
+    """
+    try:
+        data = request.json
+        required = ['image_base64', 'name', 'contact', 'order_details', 'selected_design']
+        for field in required:
+            if field not in data:
+                return jsonify({'error': f'Missing field: {field}'}), 400
+        
+        # Проверяем наличие ключей
+        if not WHATSAPP_PHONE_ID or not WHATSAPP_TOKEN:
+            return jsonify({'error': 'WhatsApp credentials not configured'}), 500
+        
+        # Извлекаем бинарные данные из base64
+        image_base64 = data['image_base64']
+        if ',' in image_base64:
+            image_base64 = image_base64.split(',')[1]
+        image_data = base64.b64decode(image_base64)
+        
+        # Сохраняем во временный файл
+        with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp:
+            tmp.write(image_data)
+            tmp_path = tmp.name
+        
+        # Загружаем медиа в WhatsApp
+        upload_url = f'https://graph.facebook.com/v17.0/{WHATSAPP_PHONE_ID}/media'
+        headers = {'Authorization': f'Bearer {WHATSAPP_TOKEN}'}
+        
+        with open(tmp_path, 'rb') as f:
+            files = {'file': (f'{uuid.uuid4()}.png', f, 'image/png')}
+            upload_resp = requests.post(upload_url, headers=headers, files=files)
+        
+        os.unlink(tmp_path)
+        
+        if upload_resp.status_code != 200:
+            return jsonify({'error': f'WhatsApp media upload failed: {upload_resp.text}'}), 500
+        
+        media_id = upload_resp.json()['id']
+        
+        # Формируем подпись
+        caption = (
+            f"📦 *Nouvelle commande*\n\n"
+            f"👤 *Nom:* {data['name']}\n"
+            f"📱 *Contact:* {data['contact']}\n"
+            f"📝 *Détails:*\n{data['order_details']}\n"
+            f"✨ *Design choisi:* {data['selected_design']}\n\n"
+            f"_En attente de validation par le Chef._"
+        )
+        
+        # Отправляем сообщение с изображением на номер Виктории
+        message_url = f'https://graph.facebook.com/v17.0/{WHATSAPP_PHONE_ID}/messages'
+        message_body = {
+            "messaging_product": "whatsapp",
+            "to": "33602353716",  # номер Виктории
+            "type": "image",
+            "image": {
+                "id": media_id,
+                "caption": caption
+            }
+        }
+        
+        msg_resp = requests.post(message_url, headers=headers, json=message_body)
+        
+        if msg_resp.status_code != 200:
+            return jsonify({'error': f'WhatsApp message send failed: {msg_resp.text}'}), 500
+        
+        msg_id = msg_resp.json().get('messages', [{}])[0].get('id')
+        
+        return jsonify({'success': True, 'message_id': msg_id})
+        
+    except Exception as e:
+        print(f"Send order error: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
 if __name__ == '__main__':
