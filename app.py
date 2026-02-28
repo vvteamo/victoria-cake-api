@@ -125,13 +125,15 @@ def send_order():
             tmp.write(image_data)
             tmp_path = tmp.name
         
-        # Загружаем медиа в WhatsApp
+        # Загружаем медиа в WhatsApp (исправлено: добавлен messaging_product)
         upload_url = f'https://graph.facebook.com/v17.0/{WHATSAPP_PHONE_ID}/media'
         headers = {'Authorization': f'Bearer {WHATSAPP_TOKEN}'}
         
         with open(tmp_path, 'rb') as f:
             files = {'file': (f'{uuid.uuid4()}.png', f, 'image/png')}
-            upload_resp = requests.post(upload_url, headers=headers, files=files)
+            # Важно: добавляем messaging_product в запрос
+            data = {'messaging_product': 'whatsapp'}
+            upload_resp = requests.post(upload_url, headers=headers, files=files, data=data)
         
         os.unlink(tmp_path)
         
@@ -150,10 +152,10 @@ def send_order():
             f"_En attente de validation par le Chef._"
         )
         
-        # Отправляем сообщение с изображением на номер Виктории
+        # Отправляем сообщение с изображением на номер Виктории (исправлено)
         message_url = f'https://graph.facebook.com/v17.0/{WHATSAPP_PHONE_ID}/messages'
         message_body = {
-            "messaging_product": "whatsapp",
+            "messaging_product": "whatsapp",  # обязательно
             "to": "33602353716",  # номер Виктории
             "type": "image",
             "image": {
