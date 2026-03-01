@@ -166,6 +166,7 @@ def send_order():
             f"_En attente de validation par le Chef._"
         )
         print(f"Caption length: {len(caption)} chars")
+        print(f"Caption content: {caption}")  # ← добавили печать подписи
         
         # Отправляем сообщение с изображением на номер Виктории
         message_url = f'https://graph.facebook.com/v17.0/{WHATSAPP_PHONE_ID}/messages'
