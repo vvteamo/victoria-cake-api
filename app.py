@@ -2,7 +2,6 @@ import os
 import base64
 import requests
 import time
-import sys
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import logging
@@ -25,6 +24,20 @@ def log_error(message):
 def log_info(message):
     logging.info(message)
 
+def download_image_as_base64(image_url):
+    """Скачивает изображение по URL и возвращает в формате base64"""
+    try:
+        response = requests.get(image_url, timeout=30)
+        if response.status_code == 200:
+            image_base64 = base64.b64encode(response.content).decode('utf-8')
+            return f"data:image/jpeg;base64,{image_base64}"
+        else:
+            log_error(f"Failed to download image: {response.status_code}")
+            return None
+    except Exception as e:
+        log_error(f"Download error: {str(e)}")
+        return None
+
 def wait_for_image(result_url, max_attempts=60, delay=2):
     """Опрашивает URL результата, пока изображение не будет готово"""
     headers = {
@@ -46,11 +59,13 @@ def wait_for_image(result_url, max_attempts=60, delay=2):
                         # Изображение готово
                         outputs = data.get('outputs', [])
                         if outputs and len(outputs) > 0:
-                            return outputs[0]
+                            # Скачиваем изображение и конвертируем в base64
+                            image_url = outputs[0]
+                            log_info(f"Image URL: {image_url}")
+                            return download_image_as_base64(image_url)
                     elif status in ['failed', 'error']:
                         log_error(f"Generation failed: {result}")
                         return None
-                    # else: still processing - продолжаем ждать
             time.sleep(delay)
         except Exception as e:
             log_error(f"Poll error: {str(e)}")
@@ -83,7 +98,7 @@ def generate():
             'Content-Type': 'application/json'
         }
         
-        image_urls = []
+        image_base64_list = []
         
         # Генерируем 2 изображения
         for i in range(2):
@@ -112,25 +127,23 @@ def generate():
                 if isinstance(data_field, dict) and 'urls' in data_field:
                     result_url = data_field['urls'].get('get')
                     if result_url:
-                        # Ждём готовности изображения
-                        image_url = wait_for_image(result_url)
-                        if image_url:
-                            image_urls.append(image_url)
+                        # Ждём готовности изображения и получаем base64
+                        image_base64 = wait_for_image(result_url)
+                        if image_base64:
+                            image_base64_list.append(image_base64)
                         else:
                             log_error(f"Failed to get image for request {i+1}")
         
-        # Если не удалось получить изображения, используем заглушки
-        if len(image_urls) < 2:
+        # Если не удалось получить изображения, используем тестовые заглушки (тоже base64)
+        if len(image_base64_list) < 2:
             log_info("Not enough images from API, using fallback")
-            fallback_images = [
-                "https://via.placeholder.com/1024x1024/b08d57/ffffff?text=Design+Principal",
-                "https://via.placeholder.com/1024x1024/8B7355/ffffff?text=Variante+Atelier"
-            ]
-            while len(image_urls) < 2:
-                image_urls.append(fallback_images[len(image_urls)])
+            # Создаём простые base64 заглушки (маленькие прозрачные PNG)
+            fallback_base64 = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+            while len(image_base64_list) < 2:
+                image_base64_list.append(fallback_base64)
         
-        log_info(f"Returning {len(image_urls)} images")
-        return jsonify({'images': image_urls})
+        log_info(f"Returning {len(image_base64_list)} images")
+        return jsonify({'images': image_base64_list})
         
     except Exception as e:
         log_error(f"Generate error: {str(e)}")
@@ -154,6 +167,7 @@ def send_order():
         order_details = data['order_details']
         selected_design = data['selected_design']
         
+        # Убираем префикс data:image/... если он есть
         if ',' in image_base64:
             image_base64 = image_base64.split(',')[1]
         
@@ -205,5 +219,4 @@ def health():
     return jsonify({'status': 'ok'}), 200
 
 if __name__ == '__main__':
-    # Увеличиваем таймаут для Gunicorn
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 10000)))
