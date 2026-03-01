@@ -142,9 +142,9 @@ def send_order():
         
         with open(tmp_path, 'rb') as f:
             files = {'file': (f'{uuid.uuid4()}.png', f, 'image/png')}
-            # Важно: добавляем messaging_product в запрос
-            data = {'messaging_product': 'whatsapp'}
-            upload_resp = requests.post(upload_url, headers=headers, files=files, data=data)
+            # Важно: добавляем messaging_product в запрос, но НЕ затираем исходные data
+            form_data = {'messaging_product': 'whatsapp'}
+            upload_resp = requests.post(upload_url, headers=headers, files=files, data=form_data)
         
         os.unlink(tmp_path)
         print(f"Upload response status: {upload_resp.status_code}")
@@ -166,7 +166,7 @@ def send_order():
             f"_En attente de validation par le Chef._"
         )
         print(f"Caption length: {len(caption)} chars")
-        print(f"Caption content: {caption}")  # ← добавили печать подписи
+        print(f"Caption content: {caption}")
         
         # Отправляем сообщение с изображением на номер Виктории
         message_url = f'https://graph.facebook.com/v17.0/{WHATSAPP_PHONE_ID}/messages'
