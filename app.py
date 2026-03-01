@@ -2,6 +2,7 @@ import os
 import base64
 import requests
 import time
+import sys
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import logging
@@ -24,7 +25,7 @@ def log_error(message):
 def log_info(message):
     logging.info(message)
 
-def wait_for_image(result_url, max_attempts=30, delay=2):
+def wait_for_image(result_url, max_attempts=60, delay=2):
     """Опрашивает URL результата, пока изображение не будет готово"""
     headers = {
         'Authorization': f'Bearer {WAVESPEED_API_KEY}'
@@ -37,19 +38,15 @@ def wait_for_image(result_url, max_attempts=30, delay=2):
                 result = response.json()
                 log_info(f"Poll response: {result}")
                 
-                # Проверяем статус
-                if isinstance(result, dict):
-                    status = result.get('status')
-                    if status == 'succeeded':
-                        # Изображение готово - ищем URL
-                        if 'output' in result:
-                            output = result['output']
-                            if isinstance(output, list) and len(output) > 0:
-                                return output[0]  # Первое изображение
-                            elif isinstance(output, str):
-                                return output
-                        elif 'image' in result:
-                            return result['image']
+                if isinstance(result, dict) and 'data' in result:
+                    data = result['data']
+                    status = data.get('status')
+                    
+                    if status == 'completed':
+                        # Изображение готово
+                        outputs = data.get('outputs', [])
+                        if outputs and len(outputs) > 0:
+                            return outputs[0]
                     elif status in ['failed', 'error']:
                         log_error(f"Generation failed: {result}")
                         return None
@@ -208,4 +205,5 @@ def health():
     return jsonify({'status': 'ok'}), 200
 
 if __name__ == '__main__':
+    # Увеличиваем таймаут для Gunicorn
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 10000)))
