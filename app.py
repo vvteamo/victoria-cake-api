@@ -1,6 +1,7 @@
 import os
 import base64
 import requests
+import time
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import logging
@@ -23,36 +24,71 @@ def log_error(message):
 def log_info(message):
     logging.info(message)
 
+def wait_for_image(result_url, max_attempts=30, delay=2):
+    """Опрашивает URL результата, пока изображение не будет готово"""
+    headers = {
+        'Authorization': f'Bearer {WAVESPEED_API_KEY}'
+    }
+    
+    for attempt in range(max_attempts):
+        try:
+            response = requests.get(result_url, headers=headers)
+            if response.status_code == 200:
+                result = response.json()
+                log_info(f"Poll response: {result}")
+                
+                # Проверяем статус
+                if isinstance(result, dict):
+                    status = result.get('status')
+                    if status == 'succeeded':
+                        # Изображение готово - ищем URL
+                        if 'output' in result:
+                            output = result['output']
+                            if isinstance(output, list) and len(output) > 0:
+                                return output[0]  # Первое изображение
+                            elif isinstance(output, str):
+                                return output
+                        elif 'image' in result:
+                            return result['image']
+                    elif status in ['failed', 'error']:
+                        log_error(f"Generation failed: {result}")
+                        return None
+                    # else: still processing - продолжаем ждать
+            time.sleep(delay)
+        except Exception as e:
+            log_error(f"Poll error: {str(e)}")
+            time.sleep(delay)
+    
+    log_error("Timeout waiting for image")
+    return None
+
 @app.route('/generate', methods=['POST'])
 def generate():
     try:
         data = request.get_json()
         log_info(f"Generate request: {data}")
         
-        # Формируем промпт на основе данных заказа
+        # Формируем промпт
         etages = data.get('etages', '1 étage')
         style = data.get('style', 'Classique Chic')
         event = data.get('event', 'Mariage')
         wishes = data.get('wishes', '')
         
-        # Базовый промпт (берём creative_prompt из старой версии)
         prompt = f"Photorealistic professional shot of a {etages} tier {event.lower()} cake, {style} style, decorated with fresh flowers. On top, an elegant gold topper that reads 'Victoria' and 'NICE, FRANCE' below. Marble table, blurred Mediterranean Sea background, Nice coastline. 8k, sharp focus, detailed texture, soft daylight. Make it even more elegant with enhanced lighting and refined details."
         
-        # Дополнительные пожелания
         if wishes:
             prompt += f" Additional details: {wishes}"
             
         log_info(f"Prompt: {prompt}")
         
-        # Запрос к Wavespeed API
         headers = {
             'Authorization': f'Bearer {WAVESPEED_API_KEY}',
             'Content-Type': 'application/json'
         }
         
-        # Генерируем 2 изображения с разными seed
         image_urls = []
         
+        # Генерируем 2 изображения
         for i in range(2):
             payload = {
                 'prompt': prompt,
@@ -60,7 +96,7 @@ def generate():
                 'num_inference_steps': 28,
                 'guidance_scale': 3.5,
                 'num_images': 1,
-                'seed': -1  # -1 для случайного seed
+                'seed': -1
             }
             
             log_info(f"Sending request {i+1} to Wavespeed API")
@@ -68,23 +104,23 @@ def generate():
             
             if response.status_code != 200:
                 log_error(f"Wavespeed API error: {response.status_code} - {response.text}")
-                # Если первая попытка не удалась, пробуем ещё раз
-                if i == 0:
-                    continue
-                else:
-                    return jsonify({'error': 'Generation failed'}), 500
+                continue
             
             result = response.json()
             log_info(f"Wavespeed response {i+1}: {result}")
             
-            # API возвращает изображение в поле 'image' (судя по структуре)
-            if isinstance(result, dict) and 'image' in result:
-                image_urls.append(result['image'])
-            elif isinstance(result, str):
-                # Если пришла просто строка с URL
-                image_urls.append(result)
-            else:
-                log_error(f"Unexpected response format: {result}")
+            # Извлекаем URL для получения результата
+            if isinstance(result, dict) and 'data' in result:
+                data_field = result['data']
+                if isinstance(data_field, dict) and 'urls' in data_field:
+                    result_url = data_field['urls'].get('get')
+                    if result_url:
+                        # Ждём готовности изображения
+                        image_url = wait_for_image(result_url)
+                        if image_url:
+                            image_urls.append(image_url)
+                        else:
+                            log_error(f"Failed to get image for request {i+1}")
         
         # Если не удалось получить изображения, используем заглушки
         if len(image_urls) < 2:
@@ -93,7 +129,6 @@ def generate():
                 "https://via.placeholder.com/1024x1024/b08d57/ffffff?text=Design+Principal",
                 "https://via.placeholder.com/1024x1024/8B7355/ffffff?text=Variante+Atelier"
             ]
-            # Заменяем недостающие изображения заглушками
             while len(image_urls) < 2:
                 image_urls.append(fallback_images[len(image_urls)])
         
@@ -110,31 +145,21 @@ def send_order():
         data = request.get_json()
         log_info(f"Send-order request received")
         
-        # Проверяем наличие всех полей
         required_fields = ['image_base64', 'name', 'contact', 'order_details', 'selected_design']
         if not all(field in data for field in required_fields):
             missing = [f for f in required_fields if f not in data]
             log_error(f"Missing fields: {missing}")
             return jsonify({'error': f'Missing fields: {missing}'}), 400
 
-        # Извлекаем данные
         image_base64 = data['image_base64']
         name = data['name']
         contact = data['contact']
         order_details = data['order_details']
         selected_design = data['selected_design']
         
-        log_info(f"Field 'image_base64' present: {image_base64[:50]}...")
-        log_info(f"Field 'name' present: {name}")
-        log_info(f"Field 'contact' present: {contact}")
-        log_info(f"Field 'order_details' present: {order_details}")
-        log_info(f"Field 'selected_design' present: {selected_design}")
-        
-        # Убираем префикс data:image/... если он есть
         if ',' in image_base64:
             image_base64 = image_base64.split(',')[1]
         
-        # Декодируем base64 в бинарные данные
         try:
             image_data = base64.b64decode(image_base64)
             log_info(f"Image data size: {len(image_data)} bytes")
@@ -142,7 +167,6 @@ def send_order():
             log_error(f"Base64 decode error: {str(e)}")
             return jsonify({'error': 'Invalid image data'}), 400
 
-        # Формируем текст сообщения
         caption = f"""📦 *Nouvelle commande*
 👤 *Nom:* {name}
 📱 *Contact:* {contact}
@@ -151,10 +175,6 @@ def send_order():
 ✨ *Design choisi:* {selected_design}
 _En attente de validation par le Chef._"""
 
-        # Проверяем длину подписи
-        log_info(f"Caption length: {len(caption)} chars")
-
-        # Отправляем в Telegram
         url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendPhoto"
         
         files = {
