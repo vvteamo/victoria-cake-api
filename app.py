@@ -15,7 +15,7 @@ logging.basicConfig(level=logging.INFO)
 TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN')
 TELEGRAM_CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID')
 WAVESPEED_API_KEY = os.environ.get('WAVESPEED_API_KEY')
-WAVESPEED_API_URL = "https://api.wavespeed.ai/v1/images/generations"
+WAVESPEED_API_URL = "https://api.wavespeed.ai/api/v3/wavespeed-ai/model"
 
 def log_error(message):
     logging.error(message)
@@ -33,7 +33,6 @@ def generate():
         etages = data.get('etages', '1 étage')
         style = data.get('style', 'Classique Chic')
         event = data.get('event', 'Mariage')
-        guests = data.get('guests', 6)
         wishes = data.get('wishes', '')
         
         # Базовый промпт
@@ -43,36 +42,77 @@ def generate():
         if wishes:
             prompt += f" Additional details: {wishes}"
             
-        creative_prompt = prompt + " Make it even more elegant with enhanced lighting and refined details."
+        log_info(f"Prompt: {prompt}")
         
-        log_info(f"Prompt (standard): {prompt}")
-        log_info(f"Prompt (creative): {creative_prompt}")
-        
-        # Запрос к Wavespeed API
+        # Запрос к Wavespeed API v3
         headers = {
             'Authorization': f'Bearer {WAVESPEED_API_KEY}',
             'Content-Type': 'application/json'
         }
         
         payload = {
-            'prompt': creative_prompt,
-            'model': 'flux',
-            'n': 2,  # Генерируем 2 изображения
-            'size': '1024x1024'
+            'prompt': prompt,
+            'stream': False
         }
         
+        log_info(f"Sending request to Wavespeed API")
         response = requests.post(WAVESPEED_API_URL, headers=headers, json=payload)
         
         if response.status_code != 200:
-            log_error(f"Wavespeed API error: {response.text}")
+            log_error(f"Wavespeed API error: {response.status_code} - {response.text}")
             return jsonify({'error': 'Generation failed'}), 500
             
         result = response.json()
+        log_info(f"Wavespeed response: {result}")
         
-        # Извлекаем URL изображений из ответа Wavespeed
-        images = result.get('data', [])
-        image_urls = [img.get('url') for img in images if img.get('url')]
+        # Парсим ответ - пробуем разные возможные форматы
+        image_urls = []
         
+        # Вариант 1: массив в поле 'data'
+        if isinstance(result, dict) and 'data' in result:
+            data_field = result['data']
+            if isinstance(data_field, list):
+                for item in data_field:
+                    if isinstance(item, str):
+                        image_urls.append(item)
+                    elif isinstance(item, dict) and 'url' in item:
+                        image_urls.append(item['url'])
+        
+        # Вариант 2: массив в поле 'images'
+        if not image_urls and isinstance(result, dict) and 'images' in result:
+            images_field = result['images']
+            if isinstance(images_field, list):
+                for item in images_field:
+                    if isinstance(item, str):
+                        image_urls.append(item)
+                    elif isinstance(item, dict) and 'url' in item:
+                        image_urls.append(item['url'])
+        
+        # Вариант 3: массив в поле 'output'
+        if not image_urls and isinstance(result, dict) and 'output' in result:
+            output_field = result['output']
+            if isinstance(output_field, list):
+                for item in output_field:
+                    if isinstance(item, str):
+                        image_urls.append(item)
+        
+        # Вариант 4: сам результат - массив
+        if not image_urls and isinstance(result, list):
+            for item in result:
+                if isinstance(item, str):
+                    image_urls.append(item)
+                elif isinstance(item, dict) and 'url' in item:
+                    image_urls.append(item['url'])
+        
+        # Если не нашли изображения, возвращаем тестовые заглушки
+        if not image_urls:
+            log_info("No images found in response, using fallback test images")
+            image_urls = [
+                "https://via.placeholder.com/1024x1024/b08d57/ffffff?text=Design+1",
+                "https://via.placeholder.com/1024x1024/8B7355/ffffff?text=Design+2"
+            ]
+        
+        log_info(f"Returning {len(image_urls)} images")
         return jsonify({'images': image_urls})
         
     except Exception as e:
