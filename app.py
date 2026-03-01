@@ -1,203 +1,166 @@
 import os
 import base64
-import tempfile
-import uuid
 import requests
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-import wavespeed
-from deep_translator import GoogleTranslator
+import logging
 
 app = Flask(__name__)
-CORS(app, origins=['*'])
+CORS(app)
 
-# Получаем API-ключи из переменных окружения
+# Настройка логирования
+logging.basicConfig(level=logging.INFO)
+
+# Конфигурация из переменных окружения
+TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN')
+TELEGRAM_CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID')
 WAVESPEED_API_KEY = os.environ.get('WAVESPEED_API_KEY')
-WHATSAPP_PHONE_ID = os.environ.get('WHATSAPP_PHONE_ID')
-WHATSAPP_TOKEN = os.environ.get('WHATSAPP_TOKEN')
-HF_API_KEY = os.environ.get('HF_API_KEY')  # для второго пути (скрыт)
+WAVESPEED_API_URL = "https://api.wavespeed.ai/v1/images/generations"
 
-if not WAVESPEED_API_KEY:
-    print("Warning: WAVESPEED_API_KEY not set")
-if not WHATSAPP_PHONE_ID or not WHATSAPP_TOKEN:
-    print("Warning: WhatsApp credentials not set")
+def log_error(message):
+    logging.error(message)
 
-def build_prompt(data, creative=False):
-    """Формирует промпт для text-to-image (первый путь)"""
-    etages = data.get('etages', '1 étage')
-    style = data.get('style', 'Classique Chic')
-    event = data.get('event', 'Mariage')
-    guests = data.get('guests', 6)
-    hasCustomTopper = data.get('hasCustomTopper', False)
-    inscription = data.get('inscription', '')
-    wishes = data.get('wishes', '')
-    date = data.get('date', '')
-    
-    prompt = f"Photorealistic professional shot of a {etages} tier wedding cake, {style} style, decorated with fresh flowers"
-    
-    if inscription:
-        prompt += f", with inscription '{inscription}'"
-    
-    if not hasCustomTopper:
-        prompt += ". On top, an elegant gold topper that reads 'Victoria' and 'NICE, FRANCE' below"
-    else:
-        prompt += ". On the marble base, a subtle gold engraving 'Victoria' and 'NICE, FRANCE'"
-    
-    prompt += ". Marble table, blurred Mediterranean Sea background, Nice coastline. 8k, sharp focus, detailed texture, soft daylight."
-    
-    if creative:
-        prompt += " Make it even more elegant with enhanced lighting and refined details."
-    
-    return prompt
-
-@app.route('/', methods=['GET'])
-def home():
-    return "API de génération de gâteaux Victoria fonctionne !"
+def log_info(message):
+    logging.info(message)
 
 @app.route('/generate', methods=['POST'])
 def generate():
     try:
-        data = request.json
-        if not WAVESPEED_API_KEY:
-            return jsonify({'error': 'WAVESPEED_API_KEY not configured'}), 500
+        data = request.get_json()
+        log_info(f"Generate request: {data}")
         
-        client = wavespeed.Client(api_key=WAVESPEED_API_KEY)
+        # Формируем промпт на основе данных заказа
+        etages = data.get('etages', '1 étage')
+        style = data.get('style', 'Classique Chic')
+        event = data.get('event', 'Mariage')
+        guests = data.get('guests', 6)
+        wishes = data.get('wishes', '')
         
-        images_base64 = []
-        image_urls = []
+        # Базовый промпт
+        prompt = f"Photorealistic professional shot of a {etages} tier {event.lower()} cake, {style} style, decorated with fresh flowers. On top, an elegant gold topper that reads 'Victoria' and 'NICE, FRANCE' below. Marble table, blurred Mediterranean Sea background, Nice coastline. 8k, sharp focus, detailed texture, soft daylight."
         
-        if 'image_base64' in data:
-            # Второй путь (скрыт) – оставляем как есть
-            pass
-        else:
-            # Первый путь
-            for creative in [False, True]:
-                prompt = build_prompt(data, creative=creative)
-                print(f"Prompt ({'creative' if creative else 'standard'}): {prompt}")
-                
-                result = client.run(
-                    "wavespeed-ai/z-image/turbo",
-                    {"prompt": prompt}
-                )
-                
-                if isinstance(result, dict) and 'outputs' in result:
-                    img_url = result['outputs'][0]
-                    img_response = requests.get(img_url)
-                    img_response.raise_for_status()
-                    image_data = img_response.content
-                    
-                    base64_image = base64.b64encode(image_data).decode('utf-8')
-                    images_base64.append(f"data:image/png;base64,{base64_image}")
-                    image_urls.append(img_url)
-                else:
-                    return jsonify({'error': f'Unexpected Wavespeed result: {result}'}), 500
+        # Дополнительные пожелания
+        if wishes:
+            prompt += f" Additional details: {wishes}"
+            
+        creative_prompt = prompt + " Make it even more elegant with enhanced lighting and refined details."
         
-        return jsonify({'images': images_base64, 'image_urls': image_urls})
+        log_info(f"Prompt (standard): {prompt}")
+        log_info(f"Prompt (creative): {creative_prompt}")
+        
+        # Запрос к Wavespeed API
+        headers = {
+            'Authorization': f'Bearer {WAVESPEED_API_KEY}',
+            'Content-Type': 'application/json'
+        }
+        
+        payload = {
+            'prompt': creative_prompt,
+            'model': 'flux',
+            'n': 2,  # Генерируем 2 изображения
+            'size': '1024x1024'
+        }
+        
+        response = requests.post(WAVESPEED_API_URL, headers=headers, json=payload)
+        
+        if response.status_code != 200:
+            log_error(f"Wavespeed API error: {response.text}")
+            return jsonify({'error': 'Generation failed'}), 500
+            
+        result = response.json()
+        
+        # Извлекаем URL изображений из ответа Wavespeed
+        images = result.get('data', [])
+        image_urls = [img.get('url') for img in images if img.get('url')]
+        
+        return jsonify({'images': image_urls})
         
     except Exception as e:
-        print(f"Error: {str(e)}")
+        log_error(f"Generate error: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
 @app.route('/send-order', methods=['POST'])
 def send_order():
-    """
-    Принимает заказ и отправляет изображение в WhatsApp через Cloud API
-    """
     try:
-        data = request.json
-        print("=== SEND-ORDER DEBUG ===")
-        print("Received data:", data)
+        data = request.get_json()
+        log_info(f"Send-order request received")
         
-        required = ['image_base64', 'name', 'contact', 'order_details', 'selected_design']
-        for field in required:
-            if field not in data:
-                print(f"Missing field: {field}")
-                return jsonify({'error': f'Missing field: {field}'}), 400
-            print(f"Field '{field}' present: {data[field][:50]}..." if field == 'image_base64' else f"Field '{field}' present: {data[field]}")
-        
-        # Проверяем наличие ключей
-        if not WHATSAPP_PHONE_ID or not WHATSAPP_TOKEN:
-            print("WhatsApp credentials not configured")
-            return jsonify({'error': 'WhatsApp credentials not configured'}), 500
-        
-        print(f"WHATSAPP_PHONE_ID: {WHATSAPP_PHONE_ID}")
-        print(f"WHATSAPP_TOKEN present: {'Yes' if WHATSAPP_TOKEN else 'No'}")
-        
-        # Извлекаем бинарные данные из base64
+        # Проверяем наличие всех полей
+        required_fields = ['image_base64', 'name', 'contact', 'order_details', 'selected_design']
+        if not all(field in data for field in required_fields):
+            missing = [f for f in required_fields if f not in data]
+            log_error(f"Missing fields: {missing}")
+            return jsonify({'error': f'Missing fields: {missing}'}), 400
+
+        # Извлекаем данные
         image_base64 = data['image_base64']
+        name = data['name']
+        contact = data['contact']
+        order_details = data['order_details']
+        selected_design = data['selected_design']
+        
+        log_info(f"Field 'image_base64' present: {image_base64[:50]}...")
+        log_info(f"Field 'name' present: {name}")
+        log_info(f"Field 'contact' present: {contact}")
+        log_info(f"Field 'order_details' present: {order_details}")
+        log_info(f"Field 'selected_design' present: {selected_design}")
+        
+        # Убираем префикс data:image/... если он есть
         if ',' in image_base64:
             image_base64 = image_base64.split(',')[1]
-        image_data = base64.b64decode(image_base64)
-        print(f"Image data size: {len(image_data)} bytes")
         
-        # Сохраняем во временный файл
-        with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp:
-            tmp.write(image_data)
-            tmp_path = tmp.name
-        print(f"Temp file created: {tmp_path}")
+        # Декодируем base64 в бинарные данные
+        try:
+            image_data = base64.b64decode(image_base64)
+            log_info(f"Image data size: {len(image_data)} bytes")
+        except Exception as e:
+            log_error(f"Base64 decode error: {str(e)}")
+            return jsonify({'error': 'Invalid image data'}), 400
+
+        # Формируем текст сообщения
+        caption = f"""📦 *Nouvelle commande*
+👤 *Nom:* {name}
+📱 *Contact:* {contact}
+📝 *Détails:*
+{order_details}
+✨ *Design choisi:* {selected_design}
+_En attente de validation par le Chef._"""
+
+        # Проверяем длину подписи
+        log_info(f"Caption length: {len(caption)} chars")
+
+        # Отправляем в Telegram
+        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendPhoto"
         
-        # Загружаем медиа в WhatsApp
-        upload_url = f'https://graph.facebook.com/v17.0/{WHATSAPP_PHONE_ID}/media'
-        headers = {'Authorization': f'Bearer {WHATSAPP_TOKEN}'}
-        
-        with open(tmp_path, 'rb') as f:
-            files = {'file': (f'{uuid.uuid4()}.png', f, 'image/png')}
-            # Важно: добавляем messaging_product в запрос, но НЕ затираем исходные data
-            form_data = {'messaging_product': 'whatsapp'}
-            upload_resp = requests.post(upload_url, headers=headers, files=files, data=form_data)
-        
-        os.unlink(tmp_path)
-        print(f"Upload response status: {upload_resp.status_code}")
-        
-        if upload_resp.status_code != 200:
-            print(f"Upload error: {upload_resp.text}")
-            return jsonify({'error': f'WhatsApp media upload failed: {upload_resp.text}'}), 500
-        
-        media_id = upload_resp.json()['id']
-        print(f"Media ID: {media_id}")
-        
-        # Формируем подпись (ИСПРАВЛЕНО: используем .get() для безопасности)
-        caption = (
-            f"📦 *Nouvelle commande*\n\n"
-            f"👤 *Nom:* {data.get('name', 'Non spécifié')}\n"
-            f"📱 *Contact:* {data.get('contact', 'Non spécifié')}\n"
-            f"📝 *Détails:*\n{data.get('order_details', 'Non spécifié')}\n"
-            f"✨ *Design choisi:* {data.get('selected_design', 'Non spécifié')}\n\n"
-            f"_En attente de validation par le Chef._"
-        )
-        print(f"Caption length: {len(caption)} chars")
-        print(f"Caption content: {caption}")
-        
-        # Отправляем сообщение с изображением на номер Виктории
-        message_url = f'https://graph.facebook.com/v17.0/{WHATSAPP_PHONE_ID}/messages'
-        message_body = {
-            "messaging_product": "whatsapp",  # обязательно
-            "to": "33602353716",  # номер Виктории
-            "type": "image",
-            "image": {
-                "id": media_id,
-                "caption": caption
-            }
+        files = {
+            'photo': ('cake.png', image_data, 'image/png')
         }
         
-        msg_resp = requests.post(message_url, headers=headers, json=message_body)
-        print(f"Message response status: {msg_resp.status_code}")
+        payload = {
+            'chat_id': TELEGRAM_CHAT_ID,
+            'caption': caption,
+            'parse_mode': 'Markdown'
+        }
         
-        if msg_resp.status_code != 200:
-            print(f"Message error: {msg_resp.text}")
-            return jsonify({'error': f'WhatsApp message send failed: {msg_resp.text}'}), 500
+        log_info(f"Sending to Telegram chat_id: {TELEGRAM_CHAT_ID}")
         
-        msg_id = msg_resp.json().get('messages', [{}])[0].get('id')
-        print(f"Message sent, ID: {msg_id}")
+        response = requests.post(url, files=files, data=payload)
         
-        return jsonify({'success': True, 'message_id': msg_id})
-        
+        if response.status_code == 200:
+            result = response.json()
+            log_info(f"Telegram response: {result}")
+            return jsonify({'success': True}), 200
+        else:
+            log_error(f"Telegram API error: {response.status_code} - {response.text}")
+            return jsonify({'error': 'Telegram send failed'}), 500
+            
     except Exception as e:
-        print(f"Send order error: {str(e)}")
-        import traceback
-        traceback.print_exc()
+        log_error(f"Send-order error: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
+@app.route('/health', methods=['GET'])
+def health():
+    return jsonify({'status': 'ok'}), 200
+
 if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port)
+    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 10000)))
