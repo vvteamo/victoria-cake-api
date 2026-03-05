@@ -103,6 +103,7 @@ def generate():
         event = data.get('event', 'Mariage')
         inscription = data.get('inscription', '').strip()
         wishes = data.get('wishes', '').strip()
+        shape_type = data.get('shapeType', 'classic')  # НОВОЕ поле
 
         # Перевод
         event_en = EVENT_MAP.get(event, event)
@@ -114,11 +115,33 @@ def generate():
         else:
             text_desc = "On top of the cake, there is an elegant gold topper featuring the logo of Victoria Pâtisserie."
 
-        wishes_text = f"{wishes}. " if wishes else ""
+        # Обработка пожеланий (wishes) и формы
+        wishes_text = ""
+        shape_desc = ""
+
+        if shape_type != 'classic':
+            # Если выбрана не классическая форма, используем wishes для описания
+            if wishes:
+                shape_desc = f"The entire cake is sculpted in the shape of {wishes}. "
+            else:
+                # Если wishes пустое, используем общее описание
+                shape_desc = "The cake has a special sculpted shape. "
+        elif wishes:
+            # Если форма классическая, но есть wishes, проверяем ключевые слова (на случай, если пользователь не выбрал форму, но описал её)
+            shape_keywords = [
+                "в форме", "в виде", "shaped like", "in the form of", "sculpted as", "form of a", "shape of a",
+                "en forme de", "en forme d'", "sous forme de", "sculpté en"
+            ]
+            is_shape_request = any(keyword in wishes.lower() for keyword in shape_keywords)
+            if is_shape_request:
+                shape_desc = f"The entire cake is sculpted in the shape of {wishes}. "
+            else:
+                wishes_text = f"{wishes}. "
 
         # Формируем структурированный промпт
         prompt_parts = [
             f"Professional food photography of a {etages}-tier {event_en} cake, {style_en} style.",
+            shape_desc,
             "The cake is decorated with fresh flowers and placed on a marble table.",
             text_desc,
             "Background is a blurred, sunlit view of the Mediterranean Sea in Nice, France.",
