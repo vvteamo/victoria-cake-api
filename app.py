@@ -2,6 +2,7 @@ import os
 import base64
 import requests
 import time
+import re
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import logging
@@ -120,9 +121,36 @@ def generate():
         wishes_text = ""
         if wishes:
             if shape_type != 'classic':
-                # Если выбрана не классическая форма, используем wishes для описания формы
-                shape_desc = f"The entire cake is sculpted in the shape of {wishes}. "
-                log_info(f"Shape request detected: {wishes}")
+                # Проверяем, не похоже ли пожелание на описание фрукта/овоща
+                fruit_keywords = [
+                    "poire", "pomme", "banane", "fraise", "citron", "orange", "pear", "apple", 
+                    "banana", "strawberry", "lemon", "orange", "tomate", "tomato", "concombre", 
+                    "cucumber", "carotte", "carrot", "fruits", "fruit", "légume", "vegetable"
+                ]
+                is_fruit = any(keyword in wishes.lower() for keyword in fruit_keywords)
+                
+                if is_fruit:
+                    # Для фруктов используем специальный шаблон с натуральными цветами
+                    # Удаляем из wishes упоминания цвета, чтобы не дублировать
+                    color_phrases = [
+                        "verte et rouge", "vert et rouge", "green and red", 
+                        "jaune et vert", "yellow and green", "rouge et vert",
+                        "red and green", "vert", "rouge", "jaune", "verte", 
+                        "green", "red", "yellow"
+                    ]
+                    clean_wishes = wishes
+                    for phrase in color_phrases:
+                        clean_wishes = clean_wishes.replace(phrase, "").replace(phrase.lower(), "").strip()
+                    
+                    # Очищаем от лишних запятых и предлогов
+                    clean_wishes = re.sub(r',+$', '', clean_wishes)
+                    clean_wishes = re.sub(r'\s+', ' ', clean_wishes)
+                    
+                    shape_desc = f"The entire cake is sculpted in the shape of a realistic {clean_wishes}. The color is natural, with a subtle gradient and a soft blush where appropriate. "
+                    log_info(f"Fruit shape detected: {clean_wishes}")
+                else:
+                    shape_desc = f"The entire cake is sculpted in the shape of {wishes}. "
+                    log_info(f"Shape request detected: {wishes}")
             else:
                 # Обычные пожелания по декору
                 wishes_text = f"{wishes}. "
@@ -145,7 +173,9 @@ def generate():
             "no distorted hands, no weird objects on cake, no extra text, no people, "
             "no silhouettes in reflections, no low quality, no blurry, no bad anatomy, "
             "no pumpkin, no orange color, no squash, no other fruits, no vegetables, "
-            "no halloween theme, no cartoon style, no ugly, no deformed"
+            "no halloween theme, no cartoon style, no ugly, no deformed, "
+            "no plasticine look, no clay, no playdough, no unnatural colors, "
+            "no flat colors, no solid blocks of color, no patches, no spots"
         )
         log_info(f"Negative prompt: {negative_prompt}")
 
