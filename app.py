@@ -103,7 +103,7 @@ def generate():
         event = data.get('event', 'Mariage')
         inscription = data.get('inscription', '').strip()
         wishes = data.get('wishes', '').strip()
-        shape_type = data.get('shapeType', 'classic')  # НОВОЕ поле
+        shape_type = data.get('shapeType', 'classic')
 
         # Перевод
         event_en = EVENT_MAP.get(event, event)
@@ -115,28 +115,18 @@ def generate():
         else:
             text_desc = "On top of the cake, there is an elegant gold topper featuring the logo of Victoria Pâtisserie."
 
-        # Обработка пожеланий (wishes) и формы
-        wishes_text = ""
+        # Логика формы
         shape_desc = ""
-
-        if shape_type != 'classic':
-            # Если выбрана не классическая форма, используем wishes для описания
-            if wishes:
+        wishes_text = ""
+        if wishes:
+            if shape_type != 'classic':
+                # Если выбрана не классическая форма, используем wishes для описания формы
                 shape_desc = f"The entire cake is sculpted in the shape of {wishes}. "
+                log_info(f"Shape request detected: {wishes}")
             else:
-                # Если wishes пустое, используем общее описание
-                shape_desc = "The cake has a special sculpted shape. "
-        elif wishes:
-            # Если форма классическая, но есть wishes, проверяем ключевые слова (на случай, если пользователь не выбрал форму, но описал её)
-            shape_keywords = [
-                "в форме", "в виде", "shaped like", "in the form of", "sculpted as", "form of a", "shape of a",
-                "en forme de", "en forme d'", "sous forme de", "sculpté en"
-            ]
-            is_shape_request = any(keyword in wishes.lower() for keyword in shape_keywords)
-            if is_shape_request:
-                shape_desc = f"The entire cake is sculpted in the shape of {wishes}. "
-            else:
+                # Обычные пожелания по декору
                 wishes_text = f"{wishes}. "
+                log_info(f"Decoration wish detected: {wishes}")
 
         # Формируем структурированный промпт
         prompt_parts = [
@@ -150,10 +140,12 @@ def generate():
         prompt = wishes_text + " ".join(prompt_parts)
         log_info(f"Final prompt: {prompt}")
 
-        # Negative prompt для улучшения качества
+        # Улучшенный negative prompt
         negative_prompt = (
             "no distorted hands, no weird objects on cake, no extra text, no people, "
-            "no silhouettes in reflections, no low quality, no blurry, no bad anatomy"
+            "no silhouettes in reflections, no low quality, no blurry, no bad anatomy, "
+            "no pumpkin, no orange color, no squash, no other fruits, no vegetables, "
+            "no halloween theme, no cartoon style, no ugly, no deformed"
         )
         log_info(f"Negative prompt: {negative_prompt}")
 
