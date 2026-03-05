@@ -18,6 +18,24 @@ TELEGRAM_CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID')
 WAVESPEED_API_KEY = os.environ.get('WAVESPEED_API_KEY')
 WAVESPEED_API_URL = "https://api.wavespeed.ai/api/v3/wavespeed-ai/flux-dev"
 
+# Словари для перевода событий и стилей на английский
+EVENT_MAP = {
+    "Mariage": "wedding",
+    "Anniversaire adulte": "adult birthday",
+    "Anniversaire enfant": "child's birthday",
+    "Baptême": "baptism",
+    "Fête corporative": "corporate party",
+    "Autre": "celebration"
+}
+
+STYLE_MAP = {
+    "Minimaliste": "minimalistic",
+    "Classique Chic": "classic chic",
+    "Floral / Romantique": "floral romantic",
+    "Artistique": "artistic",
+    "Sur mesure": "custom"
+}
+
 def log_error(message):
     logging.error(message)
 
@@ -56,10 +74,8 @@ def wait_for_image(result_url, max_attempts=60, delay=2):
                     status = data.get('status')
                     
                     if status == 'completed':
-                        # Изображение готово
                         outputs = data.get('outputs', [])
                         if outputs and len(outputs) > 0:
-                            # Скачиваем изображение и конвертируем в base64
                             image_url = outputs[0]
                             log_info(f"Image URL: {image_url}")
                             return download_image_as_base64(image_url)
@@ -79,72 +95,96 @@ def generate():
     try:
         data = request.get_json()
         log_info(f"Generate request: {data}")
-        
-        # Формируем промпт
-        etages = data.get('etages', '1 étage')
+
+        # Извлекаем параметры
+        etages_raw = data.get('etages', '1 étage')
+        etages = etages_raw.split()[0] if etages_raw else '1'
         style = data.get('style', 'Classique Chic')
         event = data.get('event', 'Mariage')
-        wishes = data.get('wishes', '')
-        
-        prompt = f"Photorealistic professional shot of a {etages} tier {event.lower()} cake, {style} style, decorated with fresh flowers. On top, an elegant gold topper that reads 'Victoria' and 'NICE, FRANCE' below. Marble table, blurred Mediterranean Sea background, Nice coastline. 8k, sharp focus, detailed texture, soft daylight. Make it even more elegant with enhanced lighting and refined details."
-        
-        if wishes:
-            prompt += f" Additional details: {wishes}"
-            
-        log_info(f"Prompt: {prompt}")
-        
+        inscription = data.get('inscription', '').strip()
+        wishes = data.get('wishes', '').strip()
+
+        # Перевод
+        event_en = EVENT_MAP.get(event, event)
+        style_en = STYLE_MAP.get(style, style)
+
+        # Логика: если есть надпись — просто текст на торте, иначе — топпер с логотипом
+        if inscription:
+            text_desc = f"The cake has the text '{inscription}' written on it, either on the top or side, in an elegant style."
+        else:
+            text_desc = "On top of the cake, there is an elegant gold topper featuring the logo of Victoria Pâtisserie."
+
+        wishes_text = f"{wishes}. " if wishes else ""
+
+        # Формируем структурированный промпт
+        prompt_parts = [
+            f"Professional food photography of a {etages}-tier {event_en} cake, {style_en} style.",
+            "The cake is decorated with fresh flowers and placed on a marble table.",
+            text_desc,
+            "Background is a blurred, sunlit view of the Mediterranean Sea in Nice, France.",
+            "Soft daylight, 8k resolution, sharp focus, detailed textures, cinematic lighting."
+        ]
+        prompt = wishes_text + " ".join(prompt_parts)
+        log_info(f"Final prompt: {prompt}")
+
+        # Negative prompt для улучшения качества
+        negative_prompt = (
+            "no distorted hands, no weird objects on cake, no extra text, no people, "
+            "no silhouettes in reflections, no low quality, no blurry, no bad anatomy"
+        )
+        log_info(f"Negative prompt: {negative_prompt}")
+
+        # Запрос к Wavespeed API
         headers = {
             'Authorization': f'Bearer {WAVESPEED_API_KEY}',
             'Content-Type': 'application/json'
         }
-        
+
         image_base64_list = []
-        
-        # Генерируем 2 изображения
-        for i in range(2):
+
+        for i in range(2):  # Генерируем два варианта
             payload = {
                 'prompt': prompt,
+                'negative_prompt': negative_prompt,
                 'size': '1024*1024',
                 'num_inference_steps': 28,
                 'guidance_scale': 3.5,
                 'num_images': 1,
                 'seed': -1
             }
-            
+
             log_info(f"Sending request {i+1} to Wavespeed API")
             response = requests.post(WAVESPEED_API_URL, headers=headers, json=payload)
-            
+
             if response.status_code != 200:
                 log_error(f"Wavespeed API error: {response.status_code} - {response.text}")
                 continue
-            
+
             result = response.json()
             log_info(f"Wavespeed response {i+1}: {result}")
-            
-            # Извлекаем URL для получения результата
+
+            # Извлекаем URL для получения результата (асинхронно)
             if isinstance(result, dict) and 'data' in result:
                 data_field = result['data']
                 if isinstance(data_field, dict) and 'urls' in data_field:
                     result_url = data_field['urls'].get('get')
                     if result_url:
-                        # Ждём готовности изображения и получаем base64
                         image_base64 = wait_for_image(result_url)
                         if image_base64:
                             image_base64_list.append(image_base64)
                         else:
                             log_error(f"Failed to get image for request {i+1}")
-        
-        # Если не удалось получить изображения, используем тестовые заглушки (тоже base64)
+
+        # Если не удалось получить изображения, используем заглушку
         if len(image_base64_list) < 2:
             log_info("Not enough images from API, using fallback")
-            # Создаём простые base64 заглушки (маленькие прозрачные PNG)
             fallback_base64 = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
             while len(image_base64_list) < 2:
                 image_base64_list.append(fallback_base64)
-        
+
         log_info(f"Returning {len(image_base64_list)} images")
         return jsonify({'images': image_base64_list})
-        
+
     except Exception as e:
         log_error(f"Generate error: {str(e)}")
         return jsonify({'error': str(e)}), 500
@@ -154,7 +194,7 @@ def send_order():
     try:
         data = request.get_json()
         log_info(f"Send-order request received")
-        
+
         required_fields = ['image_base64', 'name', 'contact', 'order_details', 'selected_design']
         if not all(field in data for field in required_fields):
             missing = [f for f in required_fields if f not in data]
@@ -166,11 +206,10 @@ def send_order():
         contact = data['contact']
         order_details = data['order_details']
         selected_design = data['selected_design']
-        
-        # Убираем префикс data:image/... если он есть
+
         if ',' in image_base64:
             image_base64 = image_base64.split(',')[1]
-        
+
         try:
             image_data = base64.b64decode(image_base64)
             log_info(f"Image data size: {len(image_data)} bytes")
@@ -187,21 +226,21 @@ def send_order():
 _En attente de validation par le Chef._"""
 
         url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendPhoto"
-        
+
         files = {
             'photo': ('cake.png', image_data, 'image/png')
         }
-        
+
         payload = {
             'chat_id': TELEGRAM_CHAT_ID,
             'caption': caption,
             'parse_mode': 'Markdown'
         }
-        
+
         log_info(f"Sending to Telegram chat_id: {TELEGRAM_CHAT_ID}")
-        
+
         response = requests.post(url, files=files, data=payload)
-        
+
         if response.status_code == 200:
             result = response.json()
             log_info(f"Telegram response: {result}")
@@ -209,7 +248,7 @@ _En attente de validation par le Chef._"""
         else:
             log_error(f"Telegram API error: {response.status_code} - {response.text}")
             return jsonify({'error': 'Telegram send failed'}), 500
-            
+
     except Exception as e:
         log_error(f"Send-order error: {str(e)}")
         return jsonify({'error': str(e)}), 500
