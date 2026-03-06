@@ -17,7 +17,8 @@ logging.basicConfig(level=logging.INFO)
 TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN')
 TELEGRAM_CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID')
 WAVESPEED_API_KEY = os.environ.get('WAVESPEED_API_KEY')
-WAVESPEED_API_URL = "https://api.wavespeed.ai/api/v3/wavespeed-ai/flux-dev"
+# ===== СМЕНИЛИ МОДЕЛЬ НА SEEDREAM =====
+WAVESPEED_API_URL = "https://api.wavespeed.ai/api/v3/wavespeed-ai/seedream"
 
 # Словари для перевода событий и стилей на английский
 EVENT_MAP = {
