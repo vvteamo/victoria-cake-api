@@ -110,11 +110,11 @@ def generate():
         event_en = EVENT_MAP.get(event, event)
         style_en = STYLE_MAP.get(style, style)
 
-        # Логика: если есть надпись — просто текст на торте, иначе — топпер с логотипом
+        # Логика: если есть надпись — максимально простой текст
         if inscription:
-            text_desc = f"The cake has the text '{inscription}' written on it, either on the top or side, in an elegant style."
+            text_desc = f"A simple elegant gold plaque with text '{inscription}' on top of the cake."
         else:
-            text_desc = "On top of the cake, there is an elegant gold topper featuring the logo of Victoria Pâtisserie."
+            text_desc = "A simple elegant gold plaque with text 'Victoria' on top of the cake."
 
         # Логика формы
         shape_desc = ""
@@ -123,19 +123,18 @@ def generate():
             if shape_type != 'classic':
                 # Проверяем, не похоже ли пожелание на описание фрукта/овоща
                 fruit_keywords = [
-                    "poire", "pomme", "banane", "fraise", "citron", "orange", "pear", "apple", 
-                    "banana", "strawberry", "lemon", "orange", "tomate", "tomato", "concombre", 
+                    "poire", "pomme", "banane", "fraise", "citron", "orange", "pear", "apple",
+                    "banana", "strawberry", "lemon", "orange", "tomate", "tomato", "concombre",
                     "cucumber", "carotte", "carrot", "fruits", "fruit", "légume", "vegetable"
                 ]
                 is_fruit = any(keyword in wishes.lower() for keyword in fruit_keywords)
                 
                 if is_fruit:
-                    # Для фруктов используем специальный шаблон с натуральными цветами
-                    # Удаляем из wishes упоминания цвета, чтобы не дублировать
+                    # Очищаем wishes от упоминаний цвета, чтобы не дублировать
                     color_phrases = [
-                        "verte et rouge", "vert et rouge", "green and red", 
+                        "verte et rouge", "vert et rouge", "green and red",
                         "jaune et vert", "yellow and green", "rouge et vert",
-                        "red and green", "vert", "rouge", "jaune", "verte", 
+                        "red and green", "vert", "rouge", "jaune", "verte",
                         "green", "red", "yellow"
                     ]
                     clean_wishes = wishes
@@ -146,8 +145,17 @@ def generate():
                     clean_wishes = re.sub(r',+$', '', clean_wishes)
                     clean_wishes = re.sub(r'\s+', ' ', clean_wishes)
                     
-                    shape_desc = f"The entire cake is sculpted in the shape of a realistic {clean_wishes}. The color is natural, with a subtle gradient and a soft blush where appropriate. "
-                    log_info(f"Fruit shape detected: {clean_wishes}")
+                    # Извлекаем название фрукта (первое слово)
+                    fruit_name = clean_wishes.split()[0] if clean_wishes else "pear"
+                    
+                    # Специальный промпт для фруктовых тортов
+                    shape_desc = (
+                        f"A whole cake sculpted as a giant realistic {fruit_name}, "
+                        f"the cake itself is the {fruit_name}, not a separate {fruit_name} on a cake. "
+                        f"The {fruit_name} has natural skin texture and a subtle color gradient. "
+                        f"On the stem, there is a single realistic small green leaf attached naturally, botanical accuracy."
+                    )
+                    log_info(f"Fruit shape improved: {fruit_name}")
                 else:
                     shape_desc = f"The entire cake is sculpted in the shape of {wishes}. "
                     log_info(f"Shape request detected: {wishes}")
@@ -160,10 +168,10 @@ def generate():
         prompt_parts = [
             f"Professional food photography of a {etages}-tier {event_en} cake, {style_en} style.",
             shape_desc,
-            "The cake is decorated with fresh flowers and placed on a marble table.",
+            "The cake is placed on a marble table.",
             text_desc,
             "Background is a blurred, sunlit view of the Mediterranean Sea in Nice, France.",
-            "Soft daylight, 8k resolution, sharp focus, detailed textures, cinematic lighting."
+            "Soft daylight, 8k resolution, sharp focus, detailed textures."
         ]
         prompt = wishes_text + " ".join(prompt_parts)
         log_info(f"Final prompt: {prompt}")
@@ -175,7 +183,9 @@ def generate():
             "no pumpkin, no orange color, no squash, no other fruits, no vegetables, "
             "no halloween theme, no cartoon style, no ugly, no deformed, "
             "no plasticine look, no clay, no playdough, no unnatural colors, "
-            "no flat colors, no solid blocks of color, no patches, no spots"
+            "no flat colors, no solid blocks of color, no patches, no spots, "
+            "no separate fruit on cake, no fruit on top, no decorations that look like fruit, "
+            "the whole cake must be the fruit itself, not a cake with fruit on it"
         )
         log_info(f"Negative prompt: {negative_prompt}")
 
