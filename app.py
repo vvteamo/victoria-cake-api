@@ -2,7 +2,6 @@ import os
 import base64
 import requests
 import time
-import re
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import logging
@@ -17,7 +16,6 @@ logging.basicConfig(level=logging.INFO)
 TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN')
 TELEGRAM_CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID')
 WAVESPEED_API_KEY = os.environ.get('WAVESPEED_API_KEY')
-# Возвращаемся на flux-dev
 WAVESPEED_API_URL = "https://api.wavespeed.ai/api/v3/wavespeed-ai/flux-dev"
 
 # Словари для перевода событий и стилей на английский
@@ -37,15 +35,6 @@ STYLE_MAP = {
     "Artistique": "artistic",
     "Sur mesure": "custom"
 }
-
-# Список ключевых слов для фруктов и овощей
-FRUIT_KEYWORDS = [
-    "poire", "pomme", "banane", "fraise", "citron", "orange", "pear", "apple",
-    "banana", "strawberry", "lemon", "orange", "tomate", "tomato", "concombre",
-    "cucumber", "carotte", "carrot", "fruits", "fruit", "légume", "vegetable",
-    "pasteque", "watermelon", "ananas", "pineapple", "peche", "peach", "cerise",
-    "cherry", "raisin", "grape", "kiwi", "mangue", "mango"
-]
 
 def log_error(message):
     logging.error(message)
@@ -101,93 +90,62 @@ def wait_for_image(result_url, max_attempts=60, delay=2):
     log_error("Timeout waiting for image")
     return None
 
-def extract_fruit_name(wishes):
-    """Извлекает название фрукта из пожелания"""
-    words = wishes.lower().split()
-    for word in words:
-        # Очищаем слово от знаков препинания
-        clean_word = re.sub(r'[^\w\s]', '', word)
-        if clean_word in FRUIT_KEYWORDS:
-            return clean_word
-    return None
-
-def build_prompt(data):
-    """Собирает промпт из структурированных блоков"""
-    
-    # Извлекаем параметры
-    etages_raw = data.get('etages', '1 étage')
-    etages = etages_raw.split()[0] if etages_raw else '1'
-    style = data.get('style', 'Classique Chic')
-    event = data.get('event', 'Mariage')
-    inscription = data.get('inscription', '').strip()
-    wishes = data.get('wishes', '').strip()
-    shape_type = data.get('shapeType', 'classic')
-
-    # Перевод
-    event_en = EVENT_MAP.get(event, event)
-    style_en = STYLE_MAP.get(style, style)
-
-    # Блок 1: Subject (объект)
-    if shape_type != 'classic' and wishes:
-        fruit_name = extract_fruit_name(wishes)
-        if fruit_name:
-            subject = f"A whole cake sculpted as a giant realistic {fruit_name}"
-            log_info(f"Fruit detected: {fruit_name}")
-        else:
-            subject = f"A whole cake sculpted as {wishes}"
-    else:
-        subject = f"A {etages}-tier {event_en} cake, {style_en} style"
-    
-    # Блок 2: Action/Pose (детали)
-    if shape_type != 'classic' and wishes:
-        if fruit_name:
-            action = f"with natural color gradient and realistic texture, and a small green leaf on the stem if applicable"
-        else:
-            action = f"with realistic details: {wishes}"
-    else:
-        action = "with elegant decorations"
-    
-    # Блок 3: Topper (надпись)
-    if inscription:
-        topper = f"On top, a simple elegant gold plaque with the inscription: '{inscription}'"
-    else:
-        topper = "On top, a simple elegant gold plaque with the text 'Victoria'"
-    
-    # Блоки 4-6: Окружение, свет, стиль, качество (всегда одинаковые)
-    environment = "The cake is placed on a marble table. Background is a blurred, sunlit view of the Mediterranean Sea in Nice, France"
-    lighting = "Soft daylight, cinematic lighting"
-    style_quality = "Photorealistic, professional food photography, 8k resolution, sharp focus, detailed textures"
-    
-    # Собираем всё в один промпт
-    prompt_parts = [
-        subject,
-        action,
-        topper,
-        environment,
-        lighting,
-        style_quality
-    ]
-    
-    prompt = ". ".join(prompt_parts) + "."
-    return prompt
-
 @app.route('/generate', methods=['POST'])
 def generate():
     try:
         data = request.get_json()
         log_info(f"Generate request: {data}")
 
-        # Собираем промпт из блоков
-        prompt = build_prompt(data)
-        log_info(f"Structured prompt: {prompt}")
+        # Извлекаем параметры
+        etages_raw = data.get('etages', '1 étage')
+        etages = etages_raw.split()[0] if etages_raw else '1'
+        style = data.get('style', 'Classique Chic')
+        event = data.get('event', 'Mariage')
+        inscription = data.get('inscription', '').strip()
+        wishes = data.get('wishes', '').strip()
+        shape_type = data.get('shapeType', 'classic')
+
+        # Перевод
+        event_en = EVENT_MAP.get(event, event)
+        style_en = STYLE_MAP.get(style, style)
+
+        # Логика: если есть надпись — просто текст на торте, иначе — топпер с логотипом
+        if inscription:
+            text_desc = f"The cake has the text '{inscription}' written on it, either on the top or side, in an elegant style."
+        else:
+            text_desc = "On top of the cake, there is an elegant gold topper featuring the logo of Victoria Pâtisserie."
+
+        # Логика формы
+        shape_desc = ""
+        wishes_text = ""
+        if wishes:
+            if shape_type != 'classic':
+                # Если выбрана не классическая форма, используем wishes для описания формы
+                shape_desc = f"The entire cake is sculpted in the shape of {wishes}. "
+                log_info(f"Shape request detected: {wishes}")
+            else:
+                # Обычные пожелания по декору
+                wishes_text = f"{wishes}. "
+                log_info(f"Decoration wish detected: {wishes}")
+
+        # Формируем структурированный промпт
+        prompt_parts = [
+            f"Professional food photography of a {etages}-tier {event_en} cake, {style_en} style.",
+            shape_desc,
+            "The cake is decorated with fresh flowers and placed on a marble table.",
+            text_desc,
+            "Background is a blurred, sunlit view of the Mediterranean Sea in Nice, France.",
+            "Soft daylight, 8k resolution, sharp focus, detailed textures, cinematic lighting."
+        ]
+        prompt = wishes_text + " ".join(prompt_parts)
+        log_info(f"Final prompt: {prompt}")
 
         # Улучшенный negative prompt
         negative_prompt = (
-            "no pumpkin, no squash, no orange color, no cartoon style, no plasticine, "
-            "no clay, no playdough, no flat colors, no solid blocks, no patches, no spots, "
-            "no separate fruit on cake, no fruit on top, no extra objects, no distorted shapes, "
-            "no weird textures, no low quality, no blurry, no bad anatomy, no extra hands, "
-            "no text except on the plaque, no people, no silhouettes, no reflections with faces"
+            "no distorted hands, no weird objects on cake, no extra text, no people, "
+            "no silhouettes in reflections, no low quality, no blurry, no bad anatomy, "
+            "no pumpkin, no orange color, no squash, no other fruits, no vegetables, "
+            "no halloween theme, no cartoon style, no ugly, no deformed"
         )
         log_info(f"Negative prompt: {negative_prompt}")
 
