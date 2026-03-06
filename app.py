@@ -18,7 +18,7 @@ TELEGRAM_CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID')
 WAVESPEED_API_KEY = os.environ.get('WAVESPEED_API_KEY')
 WAVESPEED_API_URL = "https://api.wavespeed.ai/api/v3/wavespeed-ai/flux-dev"
 
-# Словари для перевода событий и стилей (пока оставим, но не используем активно)
+# Словари для перевода событий и стилей
 EVENT_MAP = {
     "Mariage": "wedding",
     "Anniversaire adulte": "adult birthday",
@@ -108,27 +108,19 @@ def generate():
         event_en = EVENT_MAP.get(event, event)
         style_en = STYLE_MAP.get(style, style)
 
-        # ========== УПРОЩЁННЫЙ ПРОМПТ ==========
+        # ========== МАКСИМАЛЬНО ПРОСТОЙ ПРОМПТ ==========
         if wishes and shape_type != 'classic':
-            # Берём первое слово как название фрукта/формы
+            # Берём первое слово как название формы
             fruit_name = wishes.split()[0] if wishes else "pear"
-            prompt = (
-                f"A whole cake sculpted as a giant realistic {fruit_name}. "
-                f"The cake is the {fruit_name}, not a {fruit_name} on a cake. "
-                f"No decorations, no plaque, no text, no topper."
-            )
-            log_info(f"Simplified fruit prompt: {prompt}")
+            # Максимально короткий промпт
+            prompt = f"A cake shaped like a {fruit_name}"
+            log_info(f"Ultra simple prompt: {prompt}")
         else:
-            # Обычный торт, если нет пожеланий или классическая форма
-            prompt = f"A {etages}-tier {event_en} cake, {style_en} style, no decorations, no text."
-            log_info(f"Simplified cake prompt: {prompt}")
+            prompt = f"A {etages}-tier {event_en} cake"
+            log_info(f"Ultra simple cake prompt: {prompt}")
 
         # Минимальный negative prompt
-        negative_prompt = (
-            "no pumpkin, no squash, no orange color, no cartoon, no plasticine, "
-            "no text, no plaque, no topper, no extra objects"
-        )
-        log_info(f"Negative prompt: {negative_prompt}")
+        negative_prompt = "no pumpkin, no squash, no orange color"
 
         # Запрос к Wavespeed API
         headers = {
@@ -138,7 +130,7 @@ def generate():
 
         image_base64_list = []
 
-        for i in range(2):  # Генерируем два варианта
+        for i in range(2):
             payload = {
                 'prompt': prompt,
                 'negative_prompt': negative_prompt,
@@ -159,7 +151,6 @@ def generate():
             result = response.json()
             log_info(f"Wavespeed response {i+1}: {result}")
 
-            # Извлекаем URL для получения результата (асинхронно)
             if isinstance(result, dict) and 'data' in result:
                 data_field = result['data']
                 if isinstance(data_field, dict) and 'urls' in data_field:
