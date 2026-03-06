@@ -109,10 +109,11 @@ def generate():
         event_en = EVENT_MAP.get(event, event)
         style_en = STYLE_MAP.get(style, style)
 
-        # Логика: если есть надпись — просто текст на торте, иначе — топпер с логотипом
+        # ========== ПРАВКА 1: ЛОГОТИП (ВОЗВРАЩАЕМ КРАСИВЫЙ) ==========
         if inscription:
             text_desc = f"The cake has the text '{inscription}' written on it, either on the top or side, in an elegant style."
         else:
+            # Возвращаем старую рабочую формулировку
             text_desc = "On top of the cake, there is an elegant gold topper featuring the logo of Victoria Pâtisserie."
 
         # Логика формы
@@ -120,19 +121,21 @@ def generate():
         wishes_text = ""
         if wishes:
             if shape_type != 'classic':
-                # Если выбрана не классическая форма, используем wishes для описания формы
-                shape_desc = f"The entire cake is sculpted in the shape of {wishes}. "
+                # ========== ПРАВКА 2: МЯГКАЯ ФОРМУЛИРОВКА ==========
+                shape_desc = f"The cake is designed in the shape of {wishes}. "
                 log_info(f"Shape request detected: {wishes}")
             else:
-                # Обычные пожелания по декору
                 wishes_text = f"{wishes}. "
                 log_info(f"Decoration wish detected: {wishes}")
 
-        # Формируем структурированный промпт
+        # ========== ПРАВКА 3: ЦВЕТЫ ТОЛЬКО ДЛЯ КЛАССИКИ ==========
+        flowers = "The cake is decorated with fresh flowers and " if shape_type == 'classic' else "The cake is "
+
+        # Формируем промпт
         prompt_parts = [
             f"Professional food photography of a {etages}-tier {event_en} cake, {style_en} style.",
             shape_desc,
-            "The cake is decorated with fresh flowers and placed on a marble table.",
+            f"{flowers}placed on a marble table.",
             text_desc,
             "Background is a blurred, sunlit view of the Mediterranean Sea in Nice, France.",
             "Soft daylight, 8k resolution, sharp focus, detailed textures, cinematic lighting."
@@ -140,12 +143,12 @@ def generate():
         prompt = wishes_text + " ".join(prompt_parts)
         log_info(f"Final prompt: {prompt}")
 
-        # Улучшенный negative prompt
+        # ========== ПРАВКА 4: ОЧИЩЕННЫЙ NEGATIVE PROMPT ==========
         negative_prompt = (
             "no distorted hands, no weird objects on cake, no extra text, no people, "
             "no silhouettes in reflections, no low quality, no blurry, no bad anatomy, "
-            "no pumpkin, no orange color, no squash, no other fruits, no vegetables, "
-            "no halloween theme, no cartoon style, no ugly, no deformed"
+            "no cartoon style, no plasticine, no clay, no playdough, no flat colors, "
+            "no solid patches, no sharp color boundaries, no artificial look"
         )
         log_info(f"Negative prompt: {negative_prompt}")
 
@@ -157,7 +160,7 @@ def generate():
 
         image_base64_list = []
 
-        for i in range(2):  # Генерируем два варианта
+        for i in range(2):
             payload = {
                 'prompt': prompt,
                 'negative_prompt': negative_prompt,
@@ -178,7 +181,6 @@ def generate():
             result = response.json()
             log_info(f"Wavespeed response {i+1}: {result}")
 
-            # Извлекаем URL для получения результата (асинхронно)
             if isinstance(result, dict) and 'data' in result:
                 data_field = result['data']
                 if isinstance(data_field, dict) and 'urls' in data_field:
@@ -190,7 +192,6 @@ def generate():
                         else:
                             log_error(f"Failed to get image for request {i+1}")
 
-        # Если не удалось получить изображения, используем заглушку
         if len(image_base64_list) < 2:
             log_info("Not enough images from API, using fallback")
             fallback_base64 = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
