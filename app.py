@@ -2,7 +2,6 @@ import os
 import base64
 import requests
 import time
-import re
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import logging
@@ -19,7 +18,7 @@ TELEGRAM_CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID')
 WAVESPEED_API_KEY = os.environ.get('WAVESPEED_API_KEY')
 WAVESPEED_API_URL = "https://api.wavespeed.ai/api/v3/wavespeed-ai/flux-dev"
 
-# Словари для перевода событий и стилей на английский
+# Словари для перевода событий и стилей (пока оставим, но не используем активно)
 EVENT_MAP = {
     "Mariage": "wedding",
     "Anniversaire adulte": "adult birthday",
@@ -102,7 +101,6 @@ def generate():
         etages = etages_raw.split()[0] if etages_raw else '1'
         style = data.get('style', 'Classique Chic')
         event = data.get('event', 'Mariage')
-        inscription = data.get('inscription', '').strip()
         wishes = data.get('wishes', '').strip()
         shape_type = data.get('shapeType', 'classic')
 
@@ -110,82 +108,25 @@ def generate():
         event_en = EVENT_MAP.get(event, event)
         style_en = STYLE_MAP.get(style, style)
 
-        # Логика: если есть надпись — максимально простой текст
-        if inscription:
-            text_desc = f"A simple elegant gold plaque with text '{inscription}' on top of the cake."
+        # ========== УПРОЩЁННЫЙ ПРОМПТ ==========
+        if wishes and shape_type != 'classic':
+            # Берём первое слово как название фрукта/формы
+            fruit_name = wishes.split()[0] if wishes else "pear"
+            prompt = (
+                f"A whole cake sculpted as a giant realistic {fruit_name}. "
+                f"The cake is the {fruit_name}, not a {fruit_name} on a cake. "
+                f"No decorations, no plaque, no text, no topper."
+            )
+            log_info(f"Simplified fruit prompt: {prompt}")
         else:
-            text_desc = "A simple elegant gold plaque with text 'Victoria' on top of the cake."
+            # Обычный торт, если нет пожеланий или классическая форма
+            prompt = f"A {etages}-tier {event_en} cake, {style_en} style, no decorations, no text."
+            log_info(f"Simplified cake prompt: {prompt}")
 
-        # Логика формы
-        shape_desc = ""
-        wishes_text = ""
-        if wishes:
-            if shape_type != 'classic':
-                # Проверяем, не похоже ли пожелание на описание фрукта/овоща
-                fruit_keywords = [
-                    "poire", "pomme", "banane", "fraise", "citron", "orange", "pear", "apple",
-                    "banana", "strawberry", "lemon", "orange", "tomate", "tomato", "concombre",
-                    "cucumber", "carotte", "carrot", "fruits", "fruit", "légume", "vegetable"
-                ]
-                is_fruit = any(keyword in wishes.lower() for keyword in fruit_keywords)
-                
-                if is_fruit:
-                    # Очищаем wishes от упоминаний цвета, чтобы не дублировать
-                    color_phrases = [
-                        "verte et rouge", "vert et rouge", "green and red",
-                        "jaune et vert", "yellow and green", "rouge et vert",
-                        "red and green", "vert", "rouge", "jaune", "verte",
-                        "green", "red", "yellow"
-                    ]
-                    clean_wishes = wishes
-                    for phrase in color_phrases:
-                        clean_wishes = clean_wishes.replace(phrase, "").replace(phrase.lower(), "").strip()
-                    
-                    # Очищаем от лишних запятых и предлогов
-                    clean_wishes = re.sub(r',+$', '', clean_wishes)
-                    clean_wishes = re.sub(r'\s+', ' ', clean_wishes)
-                    
-                    # Извлекаем название фрукта (первое слово)
-                    fruit_name = clean_wishes.split()[0] if clean_wishes else "pear"
-                    
-                    # Специальный промпт для фруктовых тортов
-                    shape_desc = (
-                        f"A whole cake sculpted as a giant realistic {fruit_name}, "
-                        f"the cake itself is the {fruit_name}, not a separate {fruit_name} on a cake. "
-                        f"The {fruit_name} has natural skin texture and a subtle color gradient. "
-                        f"On the stem, there is a single realistic small green leaf attached naturally, botanical accuracy."
-                    )
-                    log_info(f"Fruit shape improved: {fruit_name}")
-                else:
-                    shape_desc = f"The entire cake is sculpted in the shape of {wishes}. "
-                    log_info(f"Shape request detected: {wishes}")
-            else:
-                # Обычные пожелания по декору
-                wishes_text = f"{wishes}. "
-                log_info(f"Decoration wish detected: {wishes}")
-
-        # Формируем структурированный промпт
-        prompt_parts = [
-            f"Professional food photography of a {etages}-tier {event_en} cake, {style_en} style.",
-            shape_desc,
-            "The cake is placed on a marble table.",
-            text_desc,
-            "Background is a blurred, sunlit view of the Mediterranean Sea in Nice, France.",
-            "Soft daylight, 8k resolution, sharp focus, detailed textures."
-        ]
-        prompt = wishes_text + " ".join(prompt_parts)
-        log_info(f"Final prompt: {prompt}")
-
-        # Улучшенный negative prompt
+        # Минимальный negative prompt
         negative_prompt = (
-            "no distorted hands, no weird objects on cake, no extra text, no people, "
-            "no silhouettes in reflections, no low quality, no blurry, no bad anatomy, "
-            "no pumpkin, no orange color, no squash, no other fruits, no vegetables, "
-            "no halloween theme, no cartoon style, no ugly, no deformed, "
-            "no plasticine look, no clay, no playdough, no unnatural colors, "
-            "no flat colors, no solid blocks of color, no patches, no spots, "
-            "no separate fruit on cake, no fruit on top, no decorations that look like fruit, "
-            "the whole cake must be the fruit itself, not a cake with fruit on it"
+            "no pumpkin, no squash, no orange color, no cartoon, no plasticine, "
+            "no text, no plaque, no topper, no extra objects"
         )
         log_info(f"Negative prompt: {negative_prompt}")
 
