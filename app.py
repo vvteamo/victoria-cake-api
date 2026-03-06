@@ -2,6 +2,7 @@ import os
 import base64
 import requests
 import time
+import re
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import logging
@@ -18,7 +19,7 @@ TELEGRAM_CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID')
 WAVESPEED_API_KEY = os.environ.get('WAVESPEED_API_KEY')
 WAVESPEED_API_URL = "https://api.wavespeed.ai/api/v3/wavespeed-ai/flux-dev"
 
-# Словари для перевода событий и стилей
+# Словари для перевода событий и стилей на английский
 EVENT_MAP = {
     "Mariage": "wedding",
     "Anniversaire adulte": "adult birthday",
@@ -35,6 +36,15 @@ STYLE_MAP = {
     "Artistique": "artistic",
     "Sur mesure": "custom"
 }
+
+# Список ключевых слов для фруктов и овощей
+FRUIT_KEYWORDS = [
+    "poire", "pomme", "banane", "fraise", "citron", "orange", "pear", "apple",
+    "banana", "strawberry", "lemon", "orange", "tomate", "tomato", "concombre",
+    "cucumber", "carotte", "carrot", "fruits", "fruit", "légume", "vegetable",
+    "pasteque", "watermelon", "ananas", "pineapple", "peche", "peach", "cerise",
+    "cherry", "raisin", "grape", "kiwi", "mangue", "mango"
+]
 
 def log_error(message):
     logging.error(message)
@@ -90,37 +100,95 @@ def wait_for_image(result_url, max_attempts=60, delay=2):
     log_error("Timeout waiting for image")
     return None
 
+def extract_fruit_name(wishes):
+    """Извлекает название фрукта из пожелания"""
+    words = wishes.lower().split()
+    for word in words:
+        # Очищаем слово от знаков препинания
+        clean_word = re.sub(r'[^\w\s]', '', word)
+        if clean_word in FRUIT_KEYWORDS:
+            return clean_word
+    return None
+
+def build_prompt(data):
+    """Собирает промпт из структурированных блоков"""
+    
+    # Извлекаем параметры
+    etages_raw = data.get('etages', '1 étage')
+    etages = etages_raw.split()[0] if etages_raw else '1'
+    style = data.get('style', 'Classique Chic')
+    event = data.get('event', 'Mariage')
+    inscription = data.get('inscription', '').strip()
+    wishes = data.get('wishes', '').strip()
+    shape_type = data.get('shapeType', 'classic')
+
+    # Перевод
+    event_en = EVENT_MAP.get(event, event)
+    style_en = STYLE_MAP.get(style, style)
+
+    # Блок 1: Subject (объект)
+    if shape_type != 'classic' and wishes:
+        fruit_name = extract_fruit_name(wishes)
+        if fruit_name:
+            subject = f"A whole cake sculpted as a giant realistic {fruit_name}"
+            log_info(f"Fruit detected: {fruit_name}")
+        else:
+            subject = f"A whole cake sculpted as {wishes}"
+    else:
+        subject = f"A {etages}-tier {event_en} cake, {style_en} style"
+    
+    # Блок 2: Action/Pose (детали)
+    if shape_type != 'classic' and wishes:
+        if fruit_name:
+            action = f"with natural color gradient and realistic texture, and a small green leaf on the stem if applicable"
+        else:
+            action = f"with realistic details: {wishes}"
+    else:
+        action = "with elegant decorations"
+    
+    # Блок 3: Topper (надпись)
+    if inscription:
+        topper = f"On top, a simple elegant gold plaque with the inscription: '{inscription}'"
+    else:
+        topper = "On top, a simple elegant gold plaque with the text 'Victoria'"
+    
+    # Блоки 4-6: Окружение, свет, стиль, качество (всегда одинаковые)
+    environment = "The cake is placed on a marble table. Background is a blurred, sunlit view of the Mediterranean Sea in Nice, France"
+    lighting = "Soft daylight, cinematic lighting"
+    style_quality = "Photorealistic, professional food photography, 8k resolution, sharp focus, detailed textures"
+    
+    # Собираем всё в один промпт
+    prompt_parts = [
+        subject,
+        action,
+        topper,
+        environment,
+        lighting,
+        style_quality
+    ]
+    
+    prompt = ". ".join(prompt_parts) + "."
+    return prompt
+
 @app.route('/generate', methods=['POST'])
 def generate():
     try:
         data = request.get_json()
         log_info(f"Generate request: {data}")
 
-        # Извлекаем параметры
-        etages_raw = data.get('etages', '1 étage')
-        etages = etages_raw.split()[0] if etages_raw else '1'
-        style = data.get('style', 'Classique Chic')
-        event = data.get('event', 'Mariage')
-        wishes = data.get('wishes', '').strip()
-        shape_type = data.get('shapeType', 'classic')
+        # Собираем промпт из блоков
+        prompt = build_prompt(data)
+        log_info(f"Structured prompt: {prompt}")
 
-        # Перевод
-        event_en = EVENT_MAP.get(event, event)
-        style_en = STYLE_MAP.get(style, style)
-
-        # ========== МАКСИМАЛЬНО ПРОСТОЙ ПРОМПТ ==========
-        if wishes and shape_type != 'classic':
-            # Берём первое слово как название формы
-            fruit_name = wishes.split()[0] if wishes else "pear"
-            # Максимально короткий промпт
-            prompt = f"A cake shaped like a {fruit_name}"
-            log_info(f"Ultra simple prompt: {prompt}")
-        else:
-            prompt = f"A {etages}-tier {event_en} cake"
-            log_info(f"Ultra simple cake prompt: {prompt}")
-
-        # Минимальный negative prompt
-        negative_prompt = "no pumpkin, no squash, no orange color"
+        # Улучшенный negative prompt
+        negative_prompt = (
+            "no pumpkin, no squash, no orange color, no cartoon style, no plasticine, "
+            "no clay, no playdough, no flat colors, no solid blocks, no patches, no spots, "
+            "no separate fruit on cake, no fruit on top, no extra objects, no distorted shapes, "
+            "no weird textures, no low quality, no blurry, no bad anatomy, no extra hands, "
+            "no text except on the plaque, no people, no silhouettes, no reflections with faces"
+        )
+        log_info(f"Negative prompt: {negative_prompt}")
 
         # Запрос к Wavespeed API
         headers = {
@@ -130,7 +198,7 @@ def generate():
 
         image_base64_list = []
 
-        for i in range(2):
+        for i in range(2):  # Генерируем два варианта
             payload = {
                 'prompt': prompt,
                 'negative_prompt': negative_prompt,
@@ -151,6 +219,7 @@ def generate():
             result = response.json()
             log_info(f"Wavespeed response {i+1}: {result}")
 
+            # Извлекаем URL для получения результата (асинхронно)
             if isinstance(result, dict) and 'data' in result:
                 data_field = result['data']
                 if isinstance(data_field, dict) and 'urls' in data_field:
