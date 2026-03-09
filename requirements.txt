@@ -4,3 +4,6 @@ requests==2.31.0
 gunicorn==21.2.0
 wavespeed==0.1.0
 deep-translator==1.11.4
+Pillow==10.2.0
+requests-toolbelt==1.0.0
+aiohttp==3.9.3
