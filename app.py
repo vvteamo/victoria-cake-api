@@ -47,7 +47,7 @@ STYLE_MAP = {
     "Sur mesure": "custom designed"
 }
 
-# --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ (БЕЗ ИЗМЕНЕНИЙ) ---
+# --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ---
 def download_image_as_pil(image_url):
     """Скачивает изображение по URL и возвращает PIL Image."""
     try:
@@ -181,12 +181,12 @@ def apply_text_postprocessing(pil_image, inscription):
     # Цвет текста (золотой)
     text_color = (212, 175, 55)
 
-    # Используем getbbox() для более точного расчета (вместо textsize)
+    # Используем getbbox() для более точного расчета
     bbox = draw.textbbox((0, 0), inscription, font=font)
     text_width = bbox[2] - bbox[0]
     text_height = bbox[3] - bbox[1]
 
-    # Позиция: по центру, немного выше середины (там, где обычно plaque)
+    # Позиция: по центру, немного выше середины
     x = (width - text_width) / 2
     y = height * 0.3 - text_height / 2
 
@@ -208,6 +208,16 @@ def build_hybrid_negative_prompt():
 
 # --- ЭНДПОИНТЫ ---
 
+@app.route('/', methods=['GET'])
+def index():
+    """Корневой маршрут для проверки работоспособности API."""
+    return jsonify({
+        'service': 'Victoria Cake API',
+        'status': 'running',
+        'endpoints': ['/generate', '/send-order', '/health'],
+        'version': 'hybrid-1.0'
+    }), 200
+
 @app.route('/generate', methods=['POST'])
 def generate():
     try:
@@ -223,7 +233,7 @@ def generate():
             'Content-Type': 'application/json'
         }
 
-        # Настройки для генерации (увеличенные steps/guidance)
+        # Настройки для генерации
         common_payload = {
             'prompt': prompt,
             'negative_prompt': negative_prompt,
@@ -263,7 +273,6 @@ def generate():
     except Exception as e:
         log_error(f"Generate error: {str(e)}")
         return jsonify({'error': str(e)}), 500
-
 
 @app.route('/send-order', methods=['POST'])
 def send_order():
@@ -318,7 +327,6 @@ _En attente de validation par le Chef._"""
     except Exception as e:
         log_error(f"Send-order error: {str(e)}")
         return jsonify({'error': str(e)}), 500
-
 
 @app.route('/health', methods=['GET'])
 def health():
