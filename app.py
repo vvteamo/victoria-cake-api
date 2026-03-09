@@ -112,7 +112,8 @@ def generate_parallel_variations(payloads, headers):
 # --- ОСНОВНАЯ ЛОГИКА: УЛУЧШЕННЫЙ ПРОМПТ И ОБРАБОТКА ТЕКСТА ---
 
 def build_hybrid_prompt(data):
-    """Собирает улучшенный промпт."""
+    """Собирает улучшенный промпт с учётом скульптурных форм."""
+    # 1. Извлечение параметров
     etages_raw = data.get('etages', '1 étage')
     etages = etages_raw.split()[0] if etages_raw else '1'
     style = data.get('style', 'Classique Chic')
@@ -121,10 +122,11 @@ def build_hybrid_prompt(data):
     shape_type = data.get('shapeType', 'classic')
     inscription = data.get('inscription', '').strip()
 
+    # 2. Перевод и маппинг стилей
     event_en = EVENT_MAP.get(event, event)
     style_desc = STYLE_MAP.get(style, f"{style} style frosting")
 
-    # Динамический декор под событие
+    # 3. Динамический декор под событие
     if event == 'Mariage':
         deco_desc = "decorated with cascading realistic sugar roses, delicate edible pearls, and a thin gold ribbon"
     elif event == 'Anniversaire enfant':
@@ -134,33 +136,58 @@ def build_hybrid_prompt(data):
     else:
         deco_desc = "decorated with fresh seasonal flowers and an elegant marble effect frosting"
 
-    # Описание места для надписи (Pillow добавит текст позже)
+    # 4. Логика надписи
     if inscription:
-        text_placement_desc = "On the top tier of the cake, there is a clean, smooth, elegant white fondant plaque (like a small edible scroll) positioned centrally, perfectly ready for an inscription."
+        text_placement_desc = "On the top of the cake, there is a clean, smooth, elegant white fondant plaque (like a small edible scroll) positioned centrally, perfectly ready for an inscription."
     else:
         text_placement_desc = "On top of the cake, there is an elegant gold topper featuring the stylized logo of Victoria Pâtisserie."
 
-    # Логика формы
+    # 5. ========== ИСПРАВЛЕННАЯ ЛОГИКА ФОРМЫ ==========
     shape_desc = ""
     wishes_desc = ""
+    
     if wishes:
         if shape_type != 'classic':
-            shape_desc = f"The entire cake is sculpted in the shape of {wishes}. "
+            # Скульптурный торт — без ярусов, весь торт — это форма
+            shape_desc = f"A hyper-realistic cake sculpted in the shape of a giant {wishes}. No tiers, no layers, the entire cake is the {wishes} itself. "
+            log_info(f"Sculptural cake: {wishes}")
         else:
+            # Классический торт — используем wishes как пожелания по декору
             wishes_desc = f"Incorporating user's specific decoration wishes: {wishes}. "
+            shape_desc = f"A hyper-realistic photograph of a {etages}-tier {event_en} cake."
+            log_info(f"Classic cake with wishes: {wishes}")
+    else:
+        # Нет пожеланий — обычный классический торт
+        shape_desc = f"A hyper-realistic photograph of a {etages}-tier {event_en} cake."
 
-    # Сборка промпта
-    prompt_parts = [
-        f"A hyper-realistic photograph of a {etages}-tier {event_en} cake.",
-        f"The cake is covered in {style_desc}.",
-        shape_desc,
-        f"{wishes_desc} {deco_desc}.",
-        "placed on a polished marble table.",
-        text_placement_desc,
-        "Background is a blurred, sunlit view of the Mediterranean Sea and the coastline of Nice, France.",
-        "Soft natural daylight, professional food photography, 8k resolution, sharp focus, incredibly detailed textures, cinematic lighting."
-    ]
+    # 6. Сборка промпта (разные варианты для скульптурного и классического)
+    if shape_type != 'classic' and wishes:
+        # Для скульптурного торта не упоминаем ярусы повторно
+        prompt_parts = [
+            shape_desc,
+            f"The cake is covered in {style_desc}.",
+            f"{deco_desc}",
+            "placed on a polished marble table.",
+            text_placement_desc,
+            "Background is a blurred, sunlit view of the Mediterranean Sea and the coastline of Nice, France.",
+            "Soft natural daylight, professional food photography, 8k resolution, sharp focus, incredibly detailed textures, cinematic lighting."
+        ]
+    else:
+        # Для классического торта — стандартная сборка
+        prompt_parts = [
+            shape_desc,
+            f"The cake is covered in {style_desc}.",
+            wishes_desc,
+            deco_desc,
+            "placed on a polished marble table.",
+            text_placement_desc,
+            "Background is a blurred, sunlit view of the Mediterranean Sea and the coastline of Nice, France.",
+            "Soft natural daylight, professional food photography, 8k resolution, sharp focus, incredibly detailed textures, cinematic lighting."
+        ]
+
     final_prompt = " ".join(prompt_parts)
+    log_info(f"Final prompt: {final_prompt}")
+    
     return final_prompt, inscription
 
 def apply_text_postprocessing(pil_image, inscription):
