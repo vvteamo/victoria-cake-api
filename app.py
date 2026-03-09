@@ -7,6 +7,7 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 from PIL import Image, ImageDraw, ImageFont
 import io
+from googletrans import Translator
 
 # --- ИНИЦИАЛИЗАЦИЯ ---
 app = Flask(__name__)
@@ -28,6 +29,9 @@ TELEGRAM_CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID')
 WAVESPEED_API_KEY = os.environ.get('WAVESPEED_API_KEY')
 WAVESPEED_API_URL = "https://api.wavespeed.ai/api/v3/wavespeed-ai/flux-dev"
 FONT_PATH = os.environ.get('FONT_PATH', 'fonts/GreatVibes-Regular.ttf')
+
+# Инициализация переводчика
+translator = Translator()
 
 # --- СЛОВАРИ ---
 EVENT_MAP = {
@@ -112,7 +116,7 @@ def generate_parallel_variations(payloads, headers):
 # --- ОСНОВНАЯ ЛОГИКА: УЛУЧШЕННЫЙ ПРОМПТ И ОБРАБОТКА ТЕКСТА ---
 
 def build_hybrid_prompt(data):
-    """Собирает улучшенный промпт с учётом скульптурных форм."""
+    """Собирает улучшенный промпт с учётом скульптурных форм и переводом."""
     # 1. Извлечение параметров
     etages_raw = data.get('etages', '1 étage')
     etages = etages_raw.split()[0] if etages_raw else '1'
@@ -122,11 +126,22 @@ def build_hybrid_prompt(data):
     shape_type = data.get('shapeType', 'classic')
     inscription = data.get('inscription', '').strip()
 
-    # 2. Перевод и маппинг стилей
+    # 2. Перевод пожеланий на английский
+    wishes_en = wishes
+    if wishes:
+        try:
+            translated = translator.translate(wishes, dest='en')
+            wishes_en = translated.text
+            log_info(f"Translated wishes: '{wishes}' -> '{wishes_en}'")
+        except Exception as e:
+            log_error(f"Translation failed: {e}")
+            wishes_en = wishes
+
+    # 3. Перевод события и стиля
     event_en = EVENT_MAP.get(event, event)
     style_desc = STYLE_MAP.get(style, f"{style} style frosting")
 
-    # 3. Динамический декор под событие
+    # 4. Динамический декор под событие
     if event == 'Mariage':
         deco_desc = "decorated with cascading realistic sugar roses, delicate edible pearls, and a thin gold ribbon"
     elif event == 'Anniversaire enfant':
@@ -136,54 +151,45 @@ def build_hybrid_prompt(data):
     else:
         deco_desc = "decorated with fresh seasonal flowers and an elegant marble effect frosting"
 
-    # 4. Логика надписи
+    # 5. Логика надписи
     if inscription:
         text_placement_desc = "On the top of the cake, there is a clean, smooth, elegant white fondant plaque (like a small edible scroll) positioned centrally, perfectly ready for an inscription."
     else:
         text_placement_desc = "On top of the cake, there is an elegant gold topper featuring the stylized logo of Victoria Pâtisserie."
 
-    # 5. ========== ИСПРАВЛЕННАЯ ЛОГИКА ФОРМЫ ==========
-    shape_desc = ""
-    wishes_desc = ""
-    
-    if wishes:
-        if shape_type != 'classic':
-            # Скульптурный торт — без ярусов, весь торт — это форма
-            shape_desc = f"A hyper-realistic cake sculpted in the shape of a giant {wishes}. No tiers, no layers, the entire cake is the {wishes} itself. "
-            log_info(f"Sculptural cake: {wishes}")
-        else:
-            # Классический торт — используем wishes как пожелания по декору
-            wishes_desc = f"Incorporating user's specific decoration wishes: {wishes}. "
-            shape_desc = f"A hyper-realistic photograph of a {etages}-tier {event_en} cake."
-            log_info(f"Classic cake with wishes: {wishes}")
+    # 6. Логика формы (исправленная)
+    if wishes_en and shape_type != 'classic':
+        # Скульптурный торт — без ярусов, с переводом
+        # Извлекаем первое слово или короткую фразу для формы
+        import re
+        # Очищаем от лишних слов, оставляем только существительное
+        clean_wishes = re.sub(r'(?i)(je veux|un|une|grosse|grande|avec|et|sur|la|le|les|des)', '', wishes_en)
+        clean_wishes = clean_wishes.strip()
+        if not clean_wishes:
+            clean_wishes = wishes_en.split()[0] if wishes_en else "pear"
+        
+        shape_desc = f"A hyper-realistic cake sculpted in the shape of a giant {clean_wishes}. No tiers, no layers, the entire cake is the {clean_wishes} itself. "
+        log_info(f"Sculptural cake: {clean_wishes}")
+        wishes_desc = ""  # Для скульптурного торта не используем wishes как декор
     else:
-        # Нет пожеланий — обычный классический торт
+        # Классический торт — с ярусами и пожеланиями как декор
+        if wishes_en:
+            wishes_desc = f"Incorporating user's specific decoration wishes: {wishes_en}. "
+        else:
+            wishes_desc = ""
         shape_desc = f"A hyper-realistic photograph of a {etages}-tier {event_en} cake."
 
-    # 6. Сборка промпта (разные варианты для скульптурного и классического)
-    if shape_type != 'classic' and wishes:
-        # Для скульптурного торта не упоминаем ярусы повторно
-        prompt_parts = [
-            shape_desc,
-            f"The cake is covered in {style_desc}.",
-            f"{deco_desc}",
-            "placed on a polished marble table.",
-            text_placement_desc,
-            "Background is a blurred, sunlit view of the Mediterranean Sea and the coastline of Nice, France.",
-            "Soft natural daylight, professional food photography, 8k resolution, sharp focus, incredibly detailed textures, cinematic lighting."
-        ]
-    else:
-        # Для классического торта — стандартная сборка
-        prompt_parts = [
-            shape_desc,
-            f"The cake is covered in {style_desc}.",
-            wishes_desc,
-            deco_desc,
-            "placed on a polished marble table.",
-            text_placement_desc,
-            "Background is a blurred, sunlit view of the Mediterranean Sea and the coastline of Nice, France.",
-            "Soft natural daylight, professional food photography, 8k resolution, sharp focus, incredibly detailed textures, cinematic lighting."
-        ]
+    # 7. Сборка промпта
+    prompt_parts = [
+        shape_desc,
+        f"The cake is covered in {style_desc}.",
+        wishes_desc,
+        deco_desc,
+        "placed on a polished marble table.",
+        text_placement_desc,
+        "Background is a blurred, sunlit view of the Mediterranean Sea and the coastline of Nice, France.",
+        "Soft natural daylight, professional food photography, 8k resolution, sharp focus, incredibly detailed textures, cinematic lighting."
+    ]
 
     final_prompt = " ".join(prompt_parts)
     log_info(f"Final prompt: {final_prompt}")
@@ -242,7 +248,7 @@ def index():
         'service': 'Victoria Cake API',
         'status': 'running',
         'endpoints': ['/generate', '/send-order', '/health'],
-        'version': 'hybrid-1.0'
+        'version': 'hybrid-2.0'
     }), 200
 
 @app.route('/generate', methods=['POST'])
