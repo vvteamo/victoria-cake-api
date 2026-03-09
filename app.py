@@ -2,23 +2,34 @@ import os
 import base64
 import requests
 import time
+import logging
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-import logging
+from PIL import Image, ImageDraw, ImageFont
+import io
 
+# --- ИНИЦИАЛИЗАЦИЯ ---
 app = Flask(__name__)
 CORS(app)
 
 # Настройка логирования
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[logging.StreamHandler()]
+)
 
-# Конфигурация из переменных окружения
+def log_error(message): logging.error(message)
+def log_info(message): logging.info(message)
+
+# --- ПЕРЕМЕННЫЕ ОКРУЖЕНИЯ ---
 TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN')
 TELEGRAM_CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID')
 WAVESPEED_API_KEY = os.environ.get('WAVESPEED_API_KEY')
 WAVESPEED_API_URL = "https://api.wavespeed.ai/api/v3/wavespeed-ai/flux-dev"
+FONT_PATH = os.environ.get('FONT_PATH', 'fonts/GreatVibes-Regular.ttf')
 
-# Словари для перевода событий и стилей на английский
+# --- СЛОВАРИ ---
 EVENT_MAP = {
     "Mariage": "wedding",
     "Anniversaire adulte": "adult birthday",
@@ -29,26 +40,20 @@ EVENT_MAP = {
 }
 
 STYLE_MAP = {
-    "Minimaliste": "minimalistic",
-    "Classique Chic": "classic chic",
-    "Floral / Romantique": "floral romantic",
-    "Artistique": "artistic",
-    "Sur mesure": "custom"
+    "Minimaliste": "minimalistic white fondant, clean geometric lines, smooth satin finish",
+    "Classique Chic": "classic chic, smooth royal icing, elegant refined piping patterns",
+    "Floral / Romantique": "romantic, realistic sugar flowers, cascading petals, velvet texture frosting",
+    "Artistique": "artistic, watercolor-style edible paint, abstract patterns, textured buttercream",
+    "Sur mesure": "custom designed"
 }
 
-def log_error(message):
-    logging.error(message)
-
-def log_info(message):
-    logging.info(message)
-
-def download_image_as_base64(image_url):
-    """Скачивает изображение по URL и возвращает в формате base64"""
+# --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ (БЕЗ ИЗМЕНЕНИЙ) ---
+def download_image_as_pil(image_url):
+    """Скачивает изображение по URL и возвращает PIL Image."""
     try:
         response = requests.get(image_url, timeout=30)
         if response.status_code == 200:
-            image_base64 = base64.b64encode(response.content).decode('utf-8')
-            return f"data:image/jpeg;base64,{image_base64}"
+            return Image.open(io.BytesIO(response.content))
         else:
             log_error(f"Failed to download image: {response.status_code}")
             return None
@@ -56,165 +61,219 @@ def download_image_as_base64(image_url):
         log_error(f"Download error: {str(e)}")
         return None
 
-def wait_for_image(result_url, max_attempts=60, delay=2):
-    """Опрашивает URL результата, пока изображение не будет готово"""
-    headers = {
-        'Authorization': f'Bearer {WAVESPEED_API_KEY}'
-    }
-    
+def pil_to_base64(pil_image):
+    """Конвертирует PIL Image в base64."""
+    buffered = io.BytesIO()
+    pil_image.save(buffered, format="PNG")
+    image_base64 = base64.b64encode(buffered.getvalue()).decode('utf-8')
+    return f"data:image/png;base64,{image_base64}"
+
+def wait_for_image_pil(result_url, max_attempts=60, delay=2):
+    """Опрашивает Wavespeed до готовности изображения, возвращает PIL Image."""
+    headers = {'Authorization': f'Bearer {WAVESPEED_API_KEY}'}
     for attempt in range(max_attempts):
         try:
             response = requests.get(result_url, headers=headers)
             if response.status_code == 200:
                 result = response.json()
-                log_info(f"Poll response: {result}")
-                
                 if isinstance(result, dict) and 'data' in result:
                     data = result['data']
                     status = data.get('status')
-                    
                     if status == 'completed':
                         outputs = data.get('outputs', [])
-                        if outputs and len(outputs) > 0:
+                        if outputs:
                             image_url = outputs[0]
-                            log_info(f"Image URL: {image_url}")
-                            return download_image_as_base64(image_url)
+                            return download_image_as_pil(image_url)
                     elif status in ['failed', 'error']:
-                        log_error(f"Generation failed: {result}")
                         return None
             time.sleep(delay)
         except Exception as e:
             log_error(f"Poll error: {str(e)}")
             time.sleep(delay)
-    
-    log_error("Timeout waiting for image")
     return None
+
+def generate_parallel_variations(payloads, headers):
+    """Запускает две генерации и собирает результаты."""
+    task_urls = []
+    for payload in payloads:
+        response = requests.post(WAVESPEED_API_URL, headers=headers, json=payload)
+        if response.status_code == 200:
+            result = response.json()
+            if isinstance(result, dict) and 'data' in result and 'urls' in result['data']:
+                task_urls.append(result['data']['urls'].get('get'))
+    
+    pil_images = []
+    for i, url in enumerate(task_urls):
+        image = wait_for_image_pil(url)
+        if image:
+            pil_images.append(image)
+    return pil_images
+
+# --- ОСНОВНАЯ ЛОГИКА: УЛУЧШЕННЫЙ ПРОМПТ И ОБРАБОТКА ТЕКСТА ---
+
+def build_hybrid_prompt(data):
+    """Собирает улучшенный промпт."""
+    etages_raw = data.get('etages', '1 étage')
+    etages = etages_raw.split()[0] if etages_raw else '1'
+    style = data.get('style', 'Classique Chic')
+    event = data.get('event', 'Mariage')
+    wishes = data.get('wishes', '').strip()
+    shape_type = data.get('shapeType', 'classic')
+    inscription = data.get('inscription', '').strip()
+
+    event_en = EVENT_MAP.get(event, event)
+    style_desc = STYLE_MAP.get(style, f"{style} style frosting")
+
+    # Динамический декор под событие
+    if event == 'Mariage':
+        deco_desc = "decorated with cascading realistic sugar roses, delicate edible pearls, and a thin gold ribbon"
+    elif event == 'Anniversaire enfant':
+        deco_desc = "decorated with playful colorful sugar stars, edible glitter, and a friendly fondant figure of a rocket and a small astronaut"
+    elif event == 'Baptême':
+        deco_desc = "decorated with delicate lace patterns, a small edible fondant figure of baby shoes, and soft pastel colors"
+    else:
+        deco_desc = "decorated with fresh seasonal flowers and an elegant marble effect frosting"
+
+    # Описание места для надписи (Pillow добавит текст позже)
+    if inscription:
+        text_placement_desc = "On the top tier of the cake, there is a clean, smooth, elegant white fondant plaque (like a small edible scroll) positioned centrally, perfectly ready for an inscription."
+    else:
+        text_placement_desc = "On top of the cake, there is an elegant gold topper featuring the stylized logo of Victoria Pâtisserie."
+
+    # Логика формы
+    shape_desc = ""
+    wishes_desc = ""
+    if wishes:
+        if shape_type != 'classic':
+            shape_desc = f"The entire cake is sculpted in the shape of {wishes}. "
+        else:
+            wishes_desc = f"Incorporating user's specific decoration wishes: {wishes}. "
+
+    # Сборка промпта
+    prompt_parts = [
+        f"A hyper-realistic photograph of a {etages}-tier {event_en} cake.",
+        f"The cake is covered in {style_desc}.",
+        shape_desc,
+        f"{wishes_desc} {deco_desc}.",
+        "placed on a polished marble table.",
+        text_placement_desc,
+        "Background is a blurred, sunlit view of the Mediterranean Sea and the coastline of Nice, France.",
+        "Soft natural daylight, professional food photography, 8k resolution, sharp focus, incredibly detailed textures, cinematic lighting."
+    ]
+    final_prompt = " ".join(prompt_parts)
+    return final_prompt, inscription
+
+def apply_text_postprocessing(pil_image, inscription):
+    """Накладывает красивый текст на изображение с помощью Pillow."""
+    if not inscription:
+        return pil_image
+
+    draw = ImageDraw.Draw(pil_image)
+    width, height = pil_image.size
+
+    try:
+        # Размер шрифта пропорционален высоте изображения
+        font = ImageFont.truetype(FONT_PATH, int(height * 0.06))
+    except IOError:
+        log_error(f"Font not found at {FONT_PATH}. Using default.")
+        font = ImageFont.load_default()
+
+    # Цвет текста (золотой)
+    text_color = (212, 175, 55)
+
+    # Используем getbbox() для более точного расчета (вместо textsize)
+    bbox = draw.textbbox((0, 0), inscription, font=font)
+    text_width = bbox[2] - bbox[0]
+    text_height = bbox[3] - bbox[1]
+
+    # Позиция: по центру, немного выше середины (там, где обычно plaque)
+    x = (width - text_width) / 2
+    y = height * 0.3 - text_height / 2
+
+    # Тень для объема
+    draw.text((x+3, y+3), inscription, font=font, fill=(0, 0, 0, 128))
+    draw.text((x, y), inscription, font=font, fill=text_color)
+
+    return pil_image
+
+def build_hybrid_negative_prompt():
+    """Возвращает negative prompt."""
+    return (
+        "blurry, cartoon, illustration, drawing, painting, deformed, ugly, bad proportions, "
+        "plastic texture, toy-like, synthetic, non-edible materials, weird shapes, extra items on cake, "
+        "distorted flowers, bad lettering, extra text, symbols, people, hands, faces, animals, "
+        "silhouettes, reflections of people, dark shadows, low resolution, bad lighting, "
+        "halloween theme, pumpkins, vegetables, fruits (unless specified), strange objects."
+    )
+
+# --- ЭНДПОИНТЫ ---
 
 @app.route('/generate', methods=['POST'])
 def generate():
     try:
         data = request.get_json()
-        log_info(f"Generate request: {data}")
+        log_info(f"Generate request received.")
 
-        # Извлекаем параметры
-        etages_raw = data.get('etages', '1 étage')
-        etages = etages_raw.split()[0] if etages_raw else '1'
-        style = data.get('style', 'Classique Chic')
-        event = data.get('event', 'Mariage')
-        inscription = data.get('inscription', '').strip()
-        wishes = data.get('wishes', '').strip()
-        shape_type = data.get('shapeType', 'classic')
+        # 1. Сборка промпта
+        prompt, inscription = build_hybrid_prompt(data)
+        negative_prompt = build_hybrid_negative_prompt()
 
-        # Перевод
-        event_en = EVENT_MAP.get(event, event)
-        style_en = STYLE_MAP.get(style, style)
-
-        # ========== ПРАВКА 1: ЛОГОТИП (ВОЗВРАЩАЕМ КРАСИВЫЙ) ==========
-        if inscription:
-            text_desc = f"The cake has the text '{inscription}' written on it, either on the top or side, in an elegant style."
-        else:
-            # Возвращаем старую рабочую формулировку
-            text_desc = "On top of the cake, there is an elegant gold topper featuring the logo of Victoria Pâtisserie."
-
-        # Логика формы
-        shape_desc = ""
-        wishes_text = ""
-        if wishes:
-            if shape_type != 'classic':
-                # ========== ПРАВКА 2: МЯГКАЯ ФОРМУЛИРОВКА ==========
-                shape_desc = f"The cake is designed in the shape of {wishes}. "
-                log_info(f"Shape request detected: {wishes}")
-            else:
-                wishes_text = f"{wishes}. "
-                log_info(f"Decoration wish detected: {wishes}")
-
-        # ========== ПРАВКА 3: ЦВЕТЫ ТОЛЬКО ДЛЯ КЛАССИКИ ==========
-        flowers = "The cake is decorated with fresh flowers and " if shape_type == 'classic' else "The cake is "
-
-        # Формируем промпт
-        prompt_parts = [
-            f"Professional food photography of a {etages}-tier {event_en} cake, {style_en} style.",
-            shape_desc,
-            f"{flowers}placed on a marble table.",
-            text_desc,
-            "Background is a blurred, sunlit view of the Mediterranean Sea in Nice, France.",
-            "Soft daylight, 8k resolution, sharp focus, detailed textures, cinematic lighting."
-        ]
-        prompt = wishes_text + " ".join(prompt_parts)
-        log_info(f"Final prompt: {prompt}")
-
-        # ========== ПРАВКА 4: ОЧИЩЕННЫЙ NEGATIVE PROMPT ==========
-        negative_prompt = (
-            "no distorted hands, no weird objects on cake, no extra text, no people, "
-            "no silhouettes in reflections, no low quality, no blurry, no bad anatomy, "
-            "no cartoon style, no plasticine, no clay, no playdough, no flat colors, "
-            "no solid patches, no sharp color boundaries, no artificial look"
-        )
-        log_info(f"Negative prompt: {negative_prompt}")
-
-        # Запрос к Wavespeed API
         headers = {
             'Authorization': f'Bearer {WAVESPEED_API_KEY}',
             'Content-Type': 'application/json'
         }
 
+        # Настройки для генерации (увеличенные steps/guidance)
+        common_payload = {
+            'prompt': prompt,
+            'negative_prompt': negative_prompt,
+            'size': '1024*1024',
+            'num_inference_steps': 35,
+            'guidance_scale': 4.5,
+            'num_images': 1,
+            'seed': -1
+        }
+
+        # Два запроса с разными seed для вариативности
+        payloads = [common_payload.copy(), common_payload.copy()]
+        payloads[1]['seed'] = 12345
+
+        # 2. Генерация двух вариантов
+        log_info("Starting parallel image generation...")
+        pil_images_raw = generate_parallel_variations(payloads, headers)
+        log_info(f"Generated {len(pil_images_raw)} variations.")
+
         image_base64_list = []
 
-        for i in range(2):
-            payload = {
-                'prompt': prompt,
-                'negative_prompt': negative_prompt,
-                'size': '1024*1024',
-                'num_inference_steps': 28,
-                'guidance_scale': 3.5,
-                'num_images': 1,
-                'seed': -1
-            }
+        # 3. Постобработка (наложение текста) для каждого варианта
+        for i, pil_image in enumerate(pil_images_raw):
+            pil_image_processed = apply_text_postprocessing(pil_image, inscription)
+            base64_string = pil_to_base64(pil_image_processed)
+            image_base64_list.append(base64_string)
 
-            log_info(f"Sending request {i+1} to Wavespeed API")
-            response = requests.post(WAVESPEED_API_URL, headers=headers, json=payload)
-
-            if response.status_code != 200:
-                log_error(f"Wavespeed API error: {response.status_code} - {response.text}")
-                continue
-
-            result = response.json()
-            log_info(f"Wavespeed response {i+1}: {result}")
-
-            if isinstance(result, dict) and 'data' in result:
-                data_field = result['data']
-                if isinstance(data_field, dict) and 'urls' in data_field:
-                    result_url = data_field['urls'].get('get')
-                    if result_url:
-                        image_base64 = wait_for_image(result_url)
-                        if image_base64:
-                            image_base64_list.append(image_base64)
-                        else:
-                            log_error(f"Failed to get image for request {i+1}")
-
+        # 4. Заглушки, если не хватает картинок
         if len(image_base64_list) < 2:
-            log_info("Not enough images from API, using fallback")
+            log_info("Insufficient images from API, using fallback.")
             fallback_base64 = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
             while len(image_base64_list) < 2:
                 image_base64_list.append(fallback_base64)
 
-        log_info(f"Returning {len(image_base64_list)} images")
         return jsonify({'images': image_base64_list})
 
     except Exception as e:
         log_error(f"Generate error: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
+
 @app.route('/send-order', methods=['POST'])
 def send_order():
     try:
         data = request.get_json()
-        log_info(f"Send-order request received")
+        log_info("Send-order request received.")
 
         required_fields = ['image_base64', 'name', 'contact', 'order_details', 'selected_design']
         if not all(field in data for field in required_fields):
             missing = [f for f in required_fields if f not in data]
-            log_error(f"Missing fields: {missing}")
             return jsonify({'error': f'Missing fields: {missing}'}), 400
 
         image_base64 = data['image_base64']
@@ -228,50 +287,44 @@ def send_order():
 
         try:
             image_data = base64.b64decode(image_base64)
-            log_info(f"Image data size: {len(image_data)} bytes")
         except Exception as e:
-            log_error(f"Base64 decode error: {str(e)}")
             return jsonify({'error': 'Invalid image data'}), 400
 
-        caption = f"""📦 *Nouvelle commande*
-👤 *Nom:* {name}
+        # Формируем сообщение для Telegram
+        caption = f"""📦 *Nouvelle commande (Victoria Pâtisserie)*
+👤 *Nom Client:* {name}
 📱 *Contact:* {contact}
-📝 *Détails:*
-{order_details}
 ✨ *Design choisi:* {selected_design}
+📝 *Détails de la commande:*
+{order_details}
 _En attente de validation par le Chef._"""
 
         url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendPhoto"
-
-        files = {
-            'photo': ('cake.png', image_data, 'image/png')
-        }
-
+        files = {'photo': ('cake_design.png', image_data, 'image/png')}
         payload = {
             'chat_id': TELEGRAM_CHAT_ID,
             'caption': caption,
             'parse_mode': 'Markdown'
         }
 
-        log_info(f"Sending to Telegram chat_id: {TELEGRAM_CHAT_ID}")
-
         response = requests.post(url, files=files, data=payload)
 
         if response.status_code == 200:
-            result = response.json()
-            log_info(f"Telegram response: {result}")
             return jsonify({'success': True}), 200
         else:
             log_error(f"Telegram API error: {response.status_code} - {response.text}")
-            return jsonify({'error': 'Telegram send failed'}), 500
+            return jsonify({'error': 'Failed to send to Telegram'}), 500
 
     except Exception as e:
         log_error(f"Send-order error: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
+
 @app.route('/health', methods=['GET'])
 def health():
-    return jsonify({'status': 'ok'}), 200
+    return jsonify({'status': 'running', 'platform': 'Hybrid'}), 200
+
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 10000)))
+    port = int(os.environ.get('PORT', 10000))
+    app.run(host='0.0.0.0', port=port)
