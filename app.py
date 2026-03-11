@@ -48,6 +48,14 @@ STYLE_MAP = {
     "Sur mesure": "custom designed"
 }
 
+# --- ФУНКЦИЯ ЭКРАНИРОВАНИЯ ТЕКСТА ДЛЯ TELEGRAM ---
+def escape_markdown(text):
+    """Экранирует специальные символы Markdown, чтобы Telegram не ломался."""
+    special_chars = ['_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!']
+    for char in special_chars:
+        text = text.replace(char, f'\\{char}')
+    return text
+
 # --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ---
 def download_image_as_pil(image_url):
     """Скачивает изображение по URL и возвращает PIL Image."""
@@ -110,7 +118,7 @@ def generate_parallel_variations(payloads, headers):
             pil_images.append(image)
     return pil_images
 
-# --- НОВАЯ ФУНКЦИЯ ПАРСИНГА ПОЖЕЛАНИЙ ---
+# --- ПАРСИНГ ПОЖЕЛАНИЙ ---
 def parse_wishes(wishes):
     """Превращает свободный текст на французском в структурированные инструкции на английском."""
     parsed = {
@@ -126,7 +134,7 @@ def parse_wishes(wishes):
     
     wishes_lower = wishes.lower()
     
-    # Ищем цвет (французские названия)
+    # Ищем цвет
     color_map = {
         'lavande': 'lavender',
         'violet': 'purple',
@@ -164,9 +172,9 @@ def parse_wishes(wishes):
     
     return parsed
 
-# --- НОВАЯ ЖЁСТКАЯ ЛОГИКА ПОСТРОЕНИЯ ПРОМПТА ---
+# --- ПОСТРОЕНИЕ ПРОМПТА ---
 def build_prompt(data):
-    """Собирает жёсткий, конкретный промпт без пространства для интерпретаций."""
+    """Собирает жёсткий, конкретный промпт."""
     etages_raw = data.get('etages', '1 étage')
     etages = etages_raw.split()[0] if etages_raw else '1'
     style = data.get('style', 'Classique Chic')
@@ -178,14 +186,15 @@ def build_prompt(data):
 
     event_en = EVENT_MAP.get(event, event)
     style_desc = STYLE_MAP.get(style, f"{style} style frosting")
+    wishes_lower = wishes.lower() if wishes else ""
 
     # Парсим пожелания
     parsed = parse_wishes(wishes) if wishes else {}
 
-    # Базовая часть (фон, освещение, качество)
+    # Базовая часть
     base = f"placed on a polished marble table. Background is a blurred, sunlit view of the Mediterranean Sea in Nice, France. Soft natural daylight, professional food photography, 8k resolution, sharp focus, detailed textures."
 
-    # Логотип — всегда строгий текст Victoria (никогда не изображение)
+    # Логотип
     topper = "On top of the cake, there is an elegant gold topper with the text 'Victoria'."
 
     # Форма торта
@@ -198,47 +207,47 @@ def build_prompt(data):
     elif shape_type == 'number':
         number = shape_details if shape_details else "0"
         shape_part = f"A hyper-realistic cake in the shape of the number {number}, consisting of two separate digits standing side by side on a cake board. The digits are made of cake."
-        topper = ""  # для цифр топпер убираем
+        topper = ""
     else:
         desc = shape_details if shape_details else "custom shape"
         shape_part = f"A hyper-realistic photograph of a {etages}-tier {event_en} cake in the shape of {desc}."
 
-    # Собираем части промпта
+    # Собираем части
     parts = [shape_part]
 
-    # 1. Цвет и покрытие (если указан в пожеланиях)
+    # Цвет
     if parsed and parsed.get('color'):
-        parts.append(f"The cake is covered in smooth {parsed['color']}-colored buttercream frosting.")
+        parts.append(f"The cake has a textured {parsed['color']}-colored buttercream frosting with visible piping.")
     else:
-        parts.append(f"The cake is covered in {style_desc}.")
+        parts.append(f"The cake has a textured {style_desc} finish with visible piping.")
 
-    # 2. Декор (растения) — только если есть в пожеланиях
+    # Растения
     if parsed and parsed.get('decor'):
         decor_str = " and ".join(parsed['decor'])
         parts.append(f"The cake is decorated with {decor_str} placed on top and around the base.")
     elif wishes and not parsed.get('decor'):
-        # Если есть пожелания, но мы не распознали растения, добавляем как есть
         parts.append(f"The cake incorporates: {wishes}.")
 
-    # 3. Ленты (если есть)
+    # Текстура крема
+    if wishes_lower and ('crème' in wishes_lower or 'creme' in wishes_lower or 'décor' in wishes_lower or 'decor' in wishes_lower):
+        parts.append("The cake has decorative piped buttercream borders and swirls, with a rustic textured finish.")
+
+    # Ленты
     if parsed and parsed.get('ribbons'):
         parts.append(parsed['ribbons'])
 
-    # 4. Базовая часть (фон, свет)
+    # База
     parts.append(base)
 
-    # 5. Топпер (если не отключён для цифр)
+    # Топпер
     if topper:
         parts.append(topper)
-
-    # Если есть пользовательская надпись, она будет добавлена позже через Pillow
-    # В промпте её не упоминаем, чтобы нейросеть не пыталась рисовать текст
 
     prompt = " ".join(parts)
     log_info(f"Generated prompt: {prompt}")
     return prompt, shape_type
 
-# --- НАЛОЖЕНИЕ ТЕКСТА (PILLOW) ---
+# --- НАЛОЖЕНИЕ ТЕКСТА ---
 def apply_text_postprocessing(pil_image, inscription, shape_type):
     if not inscription:
         return pil_image
@@ -252,7 +261,7 @@ def apply_text_postprocessing(pil_image, inscription, shape_type):
         log_error(f"Font not found at {FONT_PATH}. Using default.")
         font = ImageFont.load_default()
 
-    text_color = (212, 175, 55)  # золотой
+    text_color = (212, 175, 55)
     bbox = draw.textbbox((0, 0), inscription, font=font)
     text_width = bbox[2] - bbox[0]
     text_height = bbox[3] - bbox[1]
@@ -274,15 +283,16 @@ def get_negative_prompt():
         "blurry, cartoon, illustration, drawing, painting, deformed, ugly, bad proportions, "
         "plastic texture, toy-like, synthetic, non-edible materials, weird shapes, extra items on cake, "
         "people, hands, faces, animals, low resolution, bad lighting, no topper unless specified, "
-        "no logo except text 'Victoria', no abstract flowers, no fantasy plants"
+        "no logo except text 'Victoria', no abstract flowers, no fantasy plants, "
+        "no smooth surface, no perfect smooth fondant, no glossy finish"
     )
 
-# --- ЭНДПОИНТ ГЕНЕРАЦИИ ---
+# --- ГЕНЕРАЦИЯ ---
 @app.route('/generate', methods=['POST'])
 def generate():
     try:
         data = request.get_json()
-        log_info(f"Generate request received.")
+        log_info("Generate request received.")
 
         prompt, shape_type = build_prompt(data)
         negative_prompt = get_negative_prompt()
@@ -326,7 +336,7 @@ def generate():
         log_error(f"Generate error: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
-# --- ЭНДПОИНТ ОТПРАВКИ ЗАКАЗА (ПУТЬ А) ---
+# --- ОТПРАВКА ЗАКАЗА (ПУТЬ А) - ИСПРАВЛЕНО ---
 @app.route('/send-order', methods=['POST'])
 def send_order():
     try:
@@ -344,6 +354,9 @@ def send_order():
         order_details = data['order_details']
         selected_design = data['selected_design']
 
+        # Экранируем спецсимволы
+        safe_order_details = escape_markdown(order_details)
+
         if ',' in image_base64:
             image_base64 = image_base64.split(',')[1]
 
@@ -357,7 +370,7 @@ def send_order():
 📱 *Contact:* {contact}
 ✨ *Design choisi:* {selected_design}
 📝 *Détails de la commande:*
-{order_details}
+{safe_order_details}
 _En attente de validation par le Chef._"""
 
         url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendPhoto"
@@ -380,7 +393,7 @@ _En attente de validation par le Chef._"""
         log_error(f"Send-order error: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
-# --- ЭНДПОИНТ ДЛЯ ЗАГРУЗКИ ФОТО (ПУТЬ Б) ---
+# --- ЗАГРУЗКА ФОТО (ПУТЬ Б) ---
 @app.route('/upload-order', methods=['POST'])
 def upload_order():
     try:
@@ -409,6 +422,7 @@ def upload_order():
             return jsonify({'error': 'Invalid date format'}), 400
 
         photo_bytes = photo.read()
+        safe_description = escape_markdown(description)
 
         caption = f"""📸 *Nouvelle commande (photo personnelle)*
 👤 *Nom Client:* {name}
@@ -416,7 +430,7 @@ def upload_order():
 👥 *Nombre d'invités:* {guests}
 📅 *Date de l'événement:* {date}
 📝 *Description:*
-{description}
+{safe_description}
 _En attente de validation par le Chef._"""
 
         url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendPhoto"
