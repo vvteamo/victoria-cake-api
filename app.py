@@ -110,9 +110,63 @@ def generate_parallel_variations(payloads, headers):
             pil_images.append(image)
     return pil_images
 
-# --- ПОСТРОЕНИЕ ПРОМПТА ---
+# --- НОВАЯ ФУНКЦИЯ ПАРСИНГА ПОЖЕЛАНИЙ ---
+def parse_wishes(wishes):
+    """Превращает свободный текст на французском в структурированные инструкции на английском."""
+    parsed = {
+        'color': '',
+        'decor': [],
+        'ribbons': '',
+        'flavor': '',
+        'special': wishes
+    }
+    
+    if not wishes:
+        return parsed
+    
+    wishes_lower = wishes.lower()
+    
+    # Ищем цвет (французские названия)
+    color_map = {
+        'lavande': 'lavender',
+        'violet': 'purple',
+        'lilas': 'lilac',
+        'menthe': 'mint green',
+        'vert': 'green',
+        'rose': 'pink',
+        'blanc': 'white',
+        'jaune': 'yellow',
+        'rouge': 'red',
+        'bleu': 'blue',
+        'or': 'gold',
+        'argent': 'silver'
+    }
+    
+    for fr_color, en_color in color_map.items():
+        if fr_color in wishes_lower:
+            parsed['color'] = en_color
+            break
+    
+    # Ищем ленты
+    ribbon_keywords = ['ruban', 'rubans', 'satin', 'nœud', 'neoud', 'bow']
+    if any(keyword in wishes_lower for keyword in ribbon_keywords):
+        parsed['ribbons'] = 'with elegant satin ribbons tied in a bow at the base'
+    
+    # Ищем конкретные растения
+    if 'lavande' in wishes_lower:
+        parsed['decor'].append('fresh sprigs of lavender')
+    if 'menthe' in wishes_lower:
+        parsed['decor'].append('fresh mint leaves')
+    if 'rose' in wishes_lower and 'couleur' not in wishes_lower:
+        parsed['decor'].append('fresh roses')
+    if 'fleurs' in wishes_lower:
+        parsed['decor'].append('fresh seasonal flowers')
+    
+    return parsed
+
+# --- НОВАЯ ЖЁСТКАЯ ЛОГИКА ПОСТРОЕНИЯ ПРОМПТА ---
 def build_prompt(data):
-    """Собирает промпт в зависимости от формы."""
+    """Собирает жёсткий, конкретный промпт без пространства для интерпретаций."""
     etages_raw = data.get('etages', '1 étage')
     etages = etages_raw.split()[0] if etages_raw else '1'
     style = data.get('style', 'Classique Chic')
@@ -120,32 +174,71 @@ def build_prompt(data):
     shape_type = data.get('shapeType', 'classic_circle')
     shape_details = data.get('shapeDetails', '').strip()
     wishes = data.get('wishes', '').strip()
+    inscription = data.get('inscription', '').strip()
 
     event_en = EVENT_MAP.get(event, event)
     style_desc = STYLE_MAP.get(style, f"{style} style frosting")
 
-    base = f"placed on a polished marble table. Background is a blurred, sunlit view of the Mediterranean Sea in Nice, France. Soft natural daylight, professional food photography, 8k resolution, sharp focus, detailed textures."
-    topper = "On top of the cake, there is an elegant gold topper featuring the logo of Victoria Pâtisserie."
+    # Парсим пожелания
+    parsed = parse_wishes(wishes) if wishes else {}
 
+    # Базовая часть (фон, освещение, качество)
+    base = f"placed on a polished marble table. Background is a blurred, sunlit view of the Mediterranean Sea in Nice, France. Soft natural daylight, professional food photography, 8k resolution, sharp focus, detailed textures."
+
+    # Логотип — всегда строгий текст Victoria (никогда не изображение)
+    topper = "On top of the cake, there is an elegant gold topper with the text 'Victoria'."
+
+    # Форма торта
     if shape_type == 'classic_circle':
-        shape_part = f"A hyper-realistic photograph of a {etages}-tier {event_en} cake, {style_desc}."
+        shape_part = f"A hyper-realistic photograph of a {etages}-tier {event_en} cake."
     elif shape_type == 'classic_square':
-        shape_part = f"A hyper-realistic photograph of a {etages}-tier square {event_en} cake, {style_desc}."
+        shape_part = f"A hyper-realistic photograph of a {etages}-tier square {event_en} cake."
     elif shape_type == 'classic_rectangle':
-        shape_part = f"A hyper-realistic photograph of a {etages}-tier rectangular {event_en} cake, {style_desc}."
+        shape_part = f"A hyper-realistic photograph of a {etages}-tier rectangular {event_en} cake."
     elif shape_type == 'number':
         number = shape_details if shape_details else "0"
-        shape_part = f"A hyper-realistic cake in the shape of the number {number}, consisting of two separate digits standing side by side on a cake board. The digits are made of cake, covered in {style_desc}."
-        topper = ""
+        shape_part = f"A hyper-realistic cake in the shape of the number {number}, consisting of two separate digits standing side by side on a cake board. The digits are made of cake."
+        topper = ""  # для цифр топпер убираем
     else:
         desc = shape_details if shape_details else "custom shape"
-        shape_part = f"A hyper-realistic photograph of a {etages}-tier {event_en} cake in the shape of {desc}, {style_desc}."
+        shape_part = f"A hyper-realistic photograph of a {etages}-tier {event_en} cake in the shape of {desc}."
 
-    wishes_part = f" Additional details: {wishes}." if wishes else ""
-    prompt = f"{shape_part} {wishes_part} {base} {topper}".strip()
+    # Собираем части промпта
+    parts = [shape_part]
+
+    # 1. Цвет и покрытие (если указан в пожеланиях)
+    if parsed and parsed.get('color'):
+        parts.append(f"The cake is covered in smooth {parsed['color']}-colored buttercream frosting.")
+    else:
+        parts.append(f"The cake is covered in {style_desc}.")
+
+    # 2. Декор (растения) — только если есть в пожеланиях
+    if parsed and parsed.get('decor'):
+        decor_str = " and ".join(parsed['decor'])
+        parts.append(f"The cake is decorated with {decor_str} placed on top and around the base.")
+    elif wishes and not parsed.get('decor'):
+        # Если есть пожелания, но мы не распознали растения, добавляем как есть
+        parts.append(f"The cake incorporates: {wishes}.")
+
+    # 3. Ленты (если есть)
+    if parsed and parsed.get('ribbons'):
+        parts.append(parsed['ribbons'])
+
+    # 4. Базовая часть (фон, свет)
+    parts.append(base)
+
+    # 5. Топпер (если не отключён для цифр)
+    if topper:
+        parts.append(topper)
+
+    # Если есть пользовательская надпись, она будет добавлена позже через Pillow
+    # В промпте её не упоминаем, чтобы нейросеть не пыталась рисовать текст
+
+    prompt = " ".join(parts)
+    log_info(f"Generated prompt: {prompt}")
     return prompt, shape_type
 
-# --- НАЛОЖЕНИЕ ТЕКСТА ---
+# --- НАЛОЖЕНИЕ ТЕКСТА (PILLOW) ---
 def apply_text_postprocessing(pil_image, inscription, shape_type):
     if not inscription:
         return pil_image
@@ -159,7 +252,7 @@ def apply_text_postprocessing(pil_image, inscription, shape_type):
         log_error(f"Font not found at {FONT_PATH}. Using default.")
         font = ImageFont.load_default()
 
-    text_color = (212, 175, 55)
+    text_color = (212, 175, 55)  # золотой
     bbox = draw.textbbox((0, 0), inscription, font=font)
     text_width = bbox[2] - bbox[0]
     text_height = bbox[3] - bbox[1]
@@ -180,7 +273,8 @@ def get_negative_prompt():
     return (
         "blurry, cartoon, illustration, drawing, painting, deformed, ugly, bad proportions, "
         "plastic texture, toy-like, synthetic, non-edible materials, weird shapes, extra items on cake, "
-        "people, hands, faces, animals, low resolution, bad lighting"
+        "people, hands, faces, animals, low resolution, bad lighting, no topper unless specified, "
+        "no logo except text 'Victoria', no abstract flowers, no fantasy plants"
     )
 
 # --- ЭНДПОИНТ ГЕНЕРАЦИИ ---
@@ -188,7 +282,7 @@ def get_negative_prompt():
 def generate():
     try:
         data = request.get_json()
-        log_info(f"Generate request: {data}")
+        log_info(f"Generate request received.")
 
         prompt, shape_type = build_prompt(data)
         negative_prompt = get_negative_prompt()
@@ -286,7 +380,7 @@ _En attente de validation par le Chef._"""
         log_error(f"Send-order error: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
-# --- НОВЫЙ ЭНДПОИНТ ДЛЯ ЗАГРУЗКИ ФОТО (ПУТЬ Б) ---
+# --- ЭНДПОИНТ ДЛЯ ЗАГРУЗКИ ФОТО (ПУТЬ Б) ---
 @app.route('/upload-order', methods=['POST'])
 def upload_order():
     try:
@@ -300,14 +394,12 @@ def upload_order():
         if not all([name, contact, guests, date, photo]):
             return jsonify({'error': 'Missing required fields'}), 400
 
-        # Валидация гостей
         try:
             if int(guests) < 6:
                 return jsonify({'error': 'Minimum 6 guests'}), 400
         except:
             return jsonify({'error': 'Invalid guests number'}), 400
 
-        # Валидация даты
         try:
             event_date = datetime.strptime(date, '%Y-%m-%d').date()
             min_date = datetime.now().date() + timedelta(days=2)
