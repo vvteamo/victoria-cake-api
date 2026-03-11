@@ -3,6 +3,7 @@ import base64
 import requests
 import time
 import logging
+import re
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from PIL import Image, ImageDraw, ImageFont
@@ -160,15 +161,19 @@ def build_hybrid_prompt(data):
     # 6. Логика формы (исправленная)
     if wishes_en and shape_type != 'classic':
         # Скульптурный торт — без ярусов, с переводом
-        # Извлекаем первое слово или короткую фразу для формы
-        import re
         # Очищаем от лишних слов, оставляем только существительное
-        clean_wishes = re.sub(r'(?i)(je veux|un|une|grosse|grande|avec|et|sur|la|le|les|des)', '', wishes_en)
+        clean_wishes = re.sub(r'(?i)(je veux|un|une|grosse|grande|avec|et|sur|la|le|les|des|I want|a|an|big|large|with|and|on|the)', '', wishes_en)
         clean_wishes = clean_wishes.strip()
         if not clean_wishes:
             clean_wishes = wishes_en.split()[0] if wishes_en else "pear"
         
-        shape_desc = f"A hyper-realistic cake sculpted in the shape of a giant {clean_wishes}. No tiers, no layers, the entire cake is the {clean_wishes} itself. "
+        # Для груши добавляем уточнение цвета
+        if "poire" in wishes.lower() or "pear" in clean_wishes.lower():
+            color_desc = "natural green color with a subtle yellow gradient, no red tones, realistic pear skin texture"
+        else:
+            color_desc = "natural realistic colors"
+        
+        shape_desc = f"A hyper-realistic cake sculpted in the shape of a giant {clean_wishes}. No tiers, no layers, the entire cake is the {clean_wishes} itself. The {clean_wishes} has {color_desc}. "
         log_info(f"Sculptural cake: {clean_wishes}")
         wishes_desc = ""  # Для скульптурного торта не используем wishes как декор
     else:
@@ -199,7 +204,9 @@ def build_hybrid_prompt(data):
 def apply_text_postprocessing(pil_image, inscription):
     """Накладывает красивый текст на изображение с помощью Pillow."""
     if not inscription:
-        return pil_image
+        # Если надписи нет, добавляем логотип Victoria
+        inscription = "Victoria"
+        log_info("No inscription provided, adding Victoria logo")
 
     draw = ImageDraw.Draw(pil_image)
     width, height = pil_image.size
@@ -219,24 +226,27 @@ def apply_text_postprocessing(pil_image, inscription):
     text_width = bbox[2] - bbox[0]
     text_height = bbox[3] - bbox[1]
 
-    # Позиция: по центру, немного выше середины
+    # Позиция: внизу, по центру (на подставке торта)
     x = (width - text_width) / 2
-    y = height * 0.3 - text_height / 2
+    y = height * 0.85 - text_height / 2  # 85% высоты — низ изображения
 
     # Тень для объема
     draw.text((x+3, y+3), inscription, font=font, fill=(0, 0, 0, 128))
     draw.text((x, y), inscription, font=font, fill=text_color)
 
+    log_info(f"Text '{inscription}' placed at ({x:.0f}, {y:.0f})")
     return pil_image
 
 def build_hybrid_negative_prompt():
-    """Возвращает negative prompt."""
+    """Возвращает усиленный negative prompt против пластика и неестественных цветов."""
     return (
         "blurry, cartoon, illustration, drawing, painting, deformed, ugly, bad proportions, "
         "plastic texture, toy-like, synthetic, non-edible materials, weird shapes, extra items on cake, "
         "distorted flowers, bad lettering, extra text, symbols, people, hands, faces, animals, "
         "silhouettes, reflections of people, dark shadows, low resolution, bad lighting, "
-        "halloween theme, pumpkins, vegetables, fruits (unless specified), strange objects."
+        "halloween theme, pumpkins, vegetables, fruits (unless specified), strange objects, "
+        "smooth plastic surface, artificial shine, glossy finish, fake colors, unnatural tones, "
+        "red spots on pears, red patches, artificial red color, no red on pears unless specified"
     )
 
 # --- ЭНДПОИНТЫ ---
@@ -248,7 +258,7 @@ def index():
         'service': 'Victoria Cake API',
         'status': 'running',
         'endpoints': ['/generate', '/send-order', '/health'],
-        'version': 'hybrid-2.0'
+        'version': 'hybrid-2.1'
     }), 200
 
 @app.route('/generate', methods=['POST'])
