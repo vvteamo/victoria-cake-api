@@ -3,6 +3,7 @@ import base64
 import requests
 import time
 import logging
+from datetime import datetime, timedelta
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from PIL import Image, ImageDraw, ImageFont
@@ -109,26 +110,23 @@ def generate_parallel_variations(payloads, headers):
             pil_images.append(image)
     return pil_images
 
-# --- ПОСТРОЕНИЕ ПРОМПТА (УПРОЩЁННЫЙ) ---
+# --- ПОСТРОЕНИЕ ПРОМПТА ---
 def build_prompt(data):
     """Собирает промпт в зависимости от формы."""
-    # Извлекаем параметры
     etages_raw = data.get('etages', '1 étage')
     etages = etages_raw.split()[0] if etages_raw else '1'
     style = data.get('style', 'Classique Chic')
     event = data.get('event', 'Mariage')
-    shape_type = data.get('shapeType', 'classic')
+    shape_type = data.get('shapeType', 'classic_circle')
     shape_details = data.get('shapeDetails', '').strip()
     wishes = data.get('wishes', '').strip()
 
     event_en = EVENT_MAP.get(event, event)
     style_desc = STYLE_MAP.get(style, f"{style} style frosting")
 
-    # Базовые части
     base = f"placed on a polished marble table. Background is a blurred, sunlit view of the Mediterranean Sea in Nice, France. Soft natural daylight, professional food photography, 8k resolution, sharp focus, detailed textures."
     topper = "On top of the cake, there is an elegant gold topper featuring the logo of Victoria Pâtisserie."
 
-    # Формируем описание в зависимости от типа формы
     if shape_type == 'classic_circle':
         shape_part = f"A hyper-realistic photograph of a {etages}-tier {event_en} cake, {style_desc}."
     elif shape_type == 'classic_square':
@@ -138,23 +136,17 @@ def build_prompt(data):
     elif shape_type == 'number':
         number = shape_details if shape_details else "0"
         shape_part = f"A hyper-realistic cake in the shape of the number {number}, consisting of two separate digits standing side by side on a cake board. The digits are made of cake, covered in {style_desc}."
-        topper = ""  # для цифр топпер убираем, чтобы не загромождать
-    else:  # other
+        topper = ""
+    else:
         desc = shape_details if shape_details else "custom shape"
         shape_part = f"A hyper-realistic photograph of a {etages}-tier {event_en} cake in the shape of {desc}, {style_desc}."
 
-    # Добавляем пожелания (wishes) если есть
-    if wishes:
-        wishes_part = f" Additional details: {wishes}."
-    else:
-        wishes_part = ""
-
+    wishes_part = f" Additional details: {wishes}." if wishes else ""
     prompt = f"{shape_part} {wishes_part} {base} {topper}".strip()
     return prompt, shape_type
 
-# --- НАЛОЖЕНИЕ ТЕКСТА (PILLOW) ---
+# --- НАЛОЖЕНИЕ ТЕКСТА ---
 def apply_text_postprocessing(pil_image, inscription, shape_type):
-    """Накладывает текст клиента на изображение."""
     if not inscription:
         return pil_image
 
@@ -167,26 +159,20 @@ def apply_text_postprocessing(pil_image, inscription, shape_type):
         log_error(f"Font not found at {FONT_PATH}. Using default.")
         font = ImageFont.load_default()
 
-    text_color = (212, 175, 55)  # золотой
-
+    text_color = (212, 175, 55)
     bbox = draw.textbbox((0, 0), inscription, font=font)
     text_width = bbox[2] - bbox[0]
     text_height = bbox[3] - bbox[1]
 
-    # Выбор позиции в зависимости от формы
     if shape_type == 'number':
-        # Для цифр – внизу по центру
         x = (width - text_width) / 2
         y = height * 0.85 - text_height / 2
     else:
-        # Для классических – на боку верхнего яруса
-        x = width * 0.1  # смещение от левого края
-        y = height * 0.2  # примерно уровень верхнего яруса
+        x = width * 0.1
+        y = height * 0.2
 
-    # Тень для объёма
     draw.text((x+2, y+2), inscription, font=font, fill=(0, 0, 0, 128))
     draw.text((x, y), inscription, font=font, fill=text_color)
-
     return pil_image
 
 # --- NEGATIVE PROMPT ---
@@ -223,7 +209,6 @@ def generate():
             'seed': -1
         }
 
-        # Два варианта с разными seed
         payloads = [common_payload.copy(), common_payload.copy()]
         payloads[1]['seed'] = 12345
 
@@ -236,7 +221,6 @@ def generate():
             base64_string = pil_to_base64(pil_image_processed)
             image_base64_list.append(base64_string)
 
-        # fallback
         if len(image_base64_list) < 2:
             fallback_base64 = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
             while len(image_base64_list) < 2:
@@ -248,7 +232,7 @@ def generate():
         log_error(f"Generate error: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
-# --- ЭНДПОИНТ ОТПРАВКИ ЗАКАЗА ---
+# --- ЭНДПОИНТ ОТПРАВКИ ЗАКАЗА (ПУТЬ А) ---
 @app.route('/send-order', methods=['POST'])
 def send_order():
     try:
@@ -302,25 +286,43 @@ _En attente de validation par le Chef._"""
         log_error(f"Send-order error: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
-# --- НОВЫЙ ЭНДПОИНТ ДЛЯ ЗАГРУЗКИ ФОТО ---
+# --- НОВЫЙ ЭНДПОИНТ ДЛЯ ЗАГРУЗКИ ФОТО (ПУТЬ Б) ---
 @app.route('/upload-order', methods=['POST'])
 def upload_order():
     try:
-        # Принимаем multipart/form-data
         name = request.form.get('name')
         contact = request.form.get('contact')
+        guests = request.form.get('guests')
+        date = request.form.get('date')
         description = request.form.get('description', '')
         photo = request.files.get('photo')
 
-        if not all([name, contact, photo]):
-            return jsonify({'error': 'Missing fields'}), 400
+        if not all([name, contact, guests, date, photo]):
+            return jsonify({'error': 'Missing required fields'}), 400
 
-        # Читаем фото в байты
+        # Валидация гостей
+        try:
+            if int(guests) < 6:
+                return jsonify({'error': 'Minimum 6 guests'}), 400
+        except:
+            return jsonify({'error': 'Invalid guests number'}), 400
+
+        # Валидация даты
+        try:
+            event_date = datetime.strptime(date, '%Y-%m-%d').date()
+            min_date = datetime.now().date() + timedelta(days=2)
+            if event_date < min_date:
+                return jsonify({'error': 'Date must be at least 2 days in advance'}), 400
+        except:
+            return jsonify({'error': 'Invalid date format'}), 400
+
         photo_bytes = photo.read()
 
         caption = f"""📸 *Nouvelle commande (photo personnelle)*
 👤 *Nom Client:* {name}
 📱 *Contact:* {contact}
+👥 *Nombre d'invités:* {guests}
+📅 *Date de l'événement:* {date}
 📝 *Description:*
 {description}
 _En attente de validation par le Chef._"""
