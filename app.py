@@ -3,12 +3,10 @@ import base64
 import requests
 import time
 import logging
-import re
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from PIL import Image, ImageDraw, ImageFont
 import io
-from googletrans import Translator
 
 # --- ИНИЦИАЛИЗАЦИЯ ---
 app = Flask(__name__)
@@ -31,10 +29,7 @@ WAVESPEED_API_KEY = os.environ.get('WAVESPEED_API_KEY')
 WAVESPEED_API_URL = "https://api.wavespeed.ai/api/v3/wavespeed-ai/flux-dev"
 FONT_PATH = os.environ.get('FONT_PATH', 'fonts/GreatVibes-Regular.ttf')
 
-# Инициализация переводчика
-translator = Translator()
-
-# --- СЛОВАРИ ---
+# --- СЛОВАРИ ДЛЯ ПЕРЕВОДА ---
 EVENT_MAP = {
     "Mariage": "wedding",
     "Anniversaire adulte": "adult birthday",
@@ -114,169 +109,110 @@ def generate_parallel_variations(payloads, headers):
             pil_images.append(image)
     return pil_images
 
-# --- ОСНОВНАЯ ЛОГИКА: УЛУЧШЕННЫЙ ПРОМПТ И ОБРАБОТКА ТЕКСТА ---
-
-def build_hybrid_prompt(data):
-    """Собирает улучшенный промпт с учётом скульптурных форм и переводом."""
-    # 1. Извлечение параметров
+# --- ПОСТРОЕНИЕ ПРОМПТА (УПРОЩЁННЫЙ) ---
+def build_prompt(data):
+    """Собирает промпт в зависимости от формы."""
+    # Извлекаем параметры
     etages_raw = data.get('etages', '1 étage')
     etages = etages_raw.split()[0] if etages_raw else '1'
     style = data.get('style', 'Classique Chic')
     event = data.get('event', 'Mariage')
-    wishes = data.get('wishes', '').strip()
     shape_type = data.get('shapeType', 'classic')
-    inscription = data.get('inscription', '').strip()
+    shape_details = data.get('shapeDetails', '').strip()
+    wishes = data.get('wishes', '').strip()
 
-    # 2. Перевод пожеланий на английский
-    wishes_en = wishes
-    if wishes:
-        try:
-            translated = translator.translate(wishes, dest='en')
-            wishes_en = translated.text
-            log_info(f"Translated wishes: '{wishes}' -> '{wishes_en}'")
-        except Exception as e:
-            log_error(f"Translation failed: {e}")
-            wishes_en = wishes
-
-    # 3. Перевод события и стиля
     event_en = EVENT_MAP.get(event, event)
     style_desc = STYLE_MAP.get(style, f"{style} style frosting")
 
-    # 4. Динамический декор под событие
-    if event == 'Mariage':
-        deco_desc = "decorated with cascading realistic sugar roses, delicate edible pearls, and a thin gold ribbon"
-    elif event == 'Anniversaire enfant':
-        deco_desc = "decorated with playful colorful sugar stars, edible glitter, and a friendly fondant figure of a rocket and a small astronaut"
-    elif event == 'Baptême':
-        deco_desc = "decorated with delicate lace patterns, a small edible fondant figure of baby shoes, and soft pastel colors"
+    # Базовые части
+    base = f"placed on a polished marble table. Background is a blurred, sunlit view of the Mediterranean Sea in Nice, France. Soft natural daylight, professional food photography, 8k resolution, sharp focus, detailed textures."
+    topper = "On top of the cake, there is an elegant gold topper featuring the logo of Victoria Pâtisserie."
+
+    # Формируем описание в зависимости от типа формы
+    if shape_type == 'classic_circle':
+        shape_part = f"A hyper-realistic photograph of a {etages}-tier {event_en} cake, {style_desc}."
+    elif shape_type == 'classic_square':
+        shape_part = f"A hyper-realistic photograph of a {etages}-tier square {event_en} cake, {style_desc}."
+    elif shape_type == 'classic_rectangle':
+        shape_part = f"A hyper-realistic photograph of a {etages}-tier rectangular {event_en} cake, {style_desc}."
+    elif shape_type == 'number':
+        number = shape_details if shape_details else "0"
+        shape_part = f"A hyper-realistic cake in the shape of the number {number}, consisting of two separate digits standing side by side on a cake board. The digits are made of cake, covered in {style_desc}."
+        topper = ""  # для цифр топпер убираем, чтобы не загромождать
+    else:  # other
+        desc = shape_details if shape_details else "custom shape"
+        shape_part = f"A hyper-realistic photograph of a {etages}-tier {event_en} cake in the shape of {desc}, {style_desc}."
+
+    # Добавляем пожелания (wishes) если есть
+    if wishes:
+        wishes_part = f" Additional details: {wishes}."
     else:
-        deco_desc = "decorated with fresh seasonal flowers and an elegant marble effect frosting"
+        wishes_part = ""
 
-    # 5. Логика надписи
-    if inscription:
-        text_placement_desc = "On the top of the cake, there is a clean, smooth, elegant white fondant plaque (like a small edible scroll) positioned centrally, perfectly ready for an inscription."
-    else:
-        text_placement_desc = "On top of the cake, there is an elegant gold topper featuring the stylized logo of Victoria Pâtisserie."
+    prompt = f"{shape_part} {wishes_part} {base} {topper}".strip()
+    return prompt, shape_type
 
-    # 6. Логика формы (исправленная)
-    if wishes_en and shape_type != 'classic':
-        # Скульптурный торт — без ярусов, с переводом
-        # Очищаем от лишних слов, оставляем только существительное
-        clean_wishes = re.sub(r'(?i)(je veux|un|une|grosse|grande|avec|et|sur|la|le|les|des|I want|a|an|big|large|with|and|on|the)', '', wishes_en)
-        clean_wishes = clean_wishes.strip()
-        if not clean_wishes:
-            clean_wishes = wishes_en.split()[0] if wishes_en else "pear"
-        
-        # Для груши добавляем уточнение цвета
-        if "poire" in wishes.lower() or "pear" in clean_wishes.lower():
-            color_desc = "natural green color with a subtle yellow gradient, no red tones, realistic pear skin texture"
-        else:
-            color_desc = "natural realistic colors"
-        
-        shape_desc = f"A hyper-realistic cake sculpted in the shape of a giant {clean_wishes}. No tiers, no layers, the entire cake is the {clean_wishes} itself. The {clean_wishes} has {color_desc}. "
-        log_info(f"Sculptural cake: {clean_wishes}")
-        wishes_desc = ""  # Для скульптурного торта не используем wishes как декор
-    else:
-        # Классический торт — с ярусами и пожеланиями как декор
-        if wishes_en:
-            wishes_desc = f"Incorporating user's specific decoration wishes: {wishes_en}. "
-        else:
-            wishes_desc = ""
-        shape_desc = f"A hyper-realistic photograph of a {etages}-tier {event_en} cake."
-
-    # 7. Сборка промпта
-    prompt_parts = [
-        shape_desc,
-        f"The cake is covered in {style_desc}.",
-        wishes_desc,
-        deco_desc,
-        "placed on a polished marble table.",
-        text_placement_desc,
-        "Background is a blurred, sunlit view of the Mediterranean Sea and the coastline of Nice, France.",
-        "Soft natural daylight, professional food photography, 8k resolution, sharp focus, incredibly detailed textures, cinematic lighting."
-    ]
-
-    final_prompt = " ".join(prompt_parts)
-    log_info(f"Final prompt: {final_prompt}")
-    
-    return final_prompt, inscription
-
-def apply_text_postprocessing(pil_image, inscription):
-    """Накладывает красивый текст на изображение с помощью Pillow."""
+# --- НАЛОЖЕНИЕ ТЕКСТА (PILLOW) ---
+def apply_text_postprocessing(pil_image, inscription, shape_type):
+    """Накладывает текст клиента на изображение."""
     if not inscription:
-        # Если надписи нет, добавляем логотип Victoria
-        inscription = "Victoria"
-        log_info("No inscription provided, adding Victoria logo")
+        return pil_image
 
     draw = ImageDraw.Draw(pil_image)
     width, height = pil_image.size
 
     try:
-        # Размер шрифта пропорционален высоте изображения
         font = ImageFont.truetype(FONT_PATH, int(height * 0.06))
     except IOError:
         log_error(f"Font not found at {FONT_PATH}. Using default.")
         font = ImageFont.load_default()
 
-    # Цвет текста (золотой)
-    text_color = (212, 175, 55)
+    text_color = (212, 175, 55)  # золотой
 
-    # Используем getbbox() для более точного расчета
     bbox = draw.textbbox((0, 0), inscription, font=font)
     text_width = bbox[2] - bbox[0]
     text_height = bbox[3] - bbox[1]
 
-    # Позиция: внизу, по центру (на подставке торта)
-    x = (width - text_width) / 2
-    y = height * 0.85 - text_height / 2  # 85% высоты — низ изображения
+    # Выбор позиции в зависимости от формы
+    if shape_type == 'number':
+        # Для цифр – внизу по центру
+        x = (width - text_width) / 2
+        y = height * 0.85 - text_height / 2
+    else:
+        # Для классических – на боку верхнего яруса
+        x = width * 0.1  # смещение от левого края
+        y = height * 0.2  # примерно уровень верхнего яруса
 
-    # Тень для объема
-    draw.text((x+3, y+3), inscription, font=font, fill=(0, 0, 0, 128))
+    # Тень для объёма
+    draw.text((x+2, y+2), inscription, font=font, fill=(0, 0, 0, 128))
     draw.text((x, y), inscription, font=font, fill=text_color)
 
-    log_info(f"Text '{inscription}' placed at ({x:.0f}, {y:.0f})")
     return pil_image
 
-def build_hybrid_negative_prompt():
-    """Возвращает усиленный negative prompt против пластика и неестественных цветов."""
+# --- NEGATIVE PROMPT ---
+def get_negative_prompt():
     return (
         "blurry, cartoon, illustration, drawing, painting, deformed, ugly, bad proportions, "
         "plastic texture, toy-like, synthetic, non-edible materials, weird shapes, extra items on cake, "
-        "distorted flowers, bad lettering, extra text, symbols, people, hands, faces, animals, "
-        "silhouettes, reflections of people, dark shadows, low resolution, bad lighting, "
-        "halloween theme, pumpkins, vegetables, fruits (unless specified), strange objects, "
-        "smooth plastic surface, artificial shine, glossy finish, fake colors, unnatural tones, "
-        "red spots on pears, red patches, artificial red color, no red on pears unless specified"
+        "people, hands, faces, animals, low resolution, bad lighting"
     )
 
-# --- ЭНДПОИНТЫ ---
-
-@app.route('/', methods=['GET'])
-def index():
-    """Корневой маршрут для проверки работоспособности API."""
-    return jsonify({
-        'service': 'Victoria Cake API',
-        'status': 'running',
-        'endpoints': ['/generate', '/send-order', '/health'],
-        'version': 'hybrid-2.1'
-    }), 200
-
+# --- ЭНДПОИНТ ГЕНЕРАЦИИ ---
 @app.route('/generate', methods=['POST'])
 def generate():
     try:
         data = request.get_json()
-        log_info(f"Generate request received.")
+        log_info(f"Generate request: {data}")
 
-        # 1. Сборка промпта
-        prompt, inscription = build_hybrid_prompt(data)
-        negative_prompt = build_hybrid_negative_prompt()
+        prompt, shape_type = build_prompt(data)
+        negative_prompt = get_negative_prompt()
+        inscription = data.get('inscription', '').strip()
 
         headers = {
             'Authorization': f'Bearer {WAVESPEED_API_KEY}',
             'Content-Type': 'application/json'
         }
 
-        # Настройки для генерации
         common_payload = {
             'prompt': prompt,
             'negative_prompt': negative_prompt,
@@ -287,26 +223,21 @@ def generate():
             'seed': -1
         }
 
-        # Два запроса с разными seed для вариативности
+        # Два варианта с разными seed
         payloads = [common_payload.copy(), common_payload.copy()]
         payloads[1]['seed'] = 12345
 
-        # 2. Генерация двух вариантов
-        log_info("Starting parallel image generation...")
         pil_images_raw = generate_parallel_variations(payloads, headers)
         log_info(f"Generated {len(pil_images_raw)} variations.")
 
         image_base64_list = []
-
-        # 3. Постобработка (наложение текста) для каждого варианта
         for i, pil_image in enumerate(pil_images_raw):
-            pil_image_processed = apply_text_postprocessing(pil_image, inscription)
+            pil_image_processed = apply_text_postprocessing(pil_image, inscription, shape_type)
             base64_string = pil_to_base64(pil_image_processed)
             image_base64_list.append(base64_string)
 
-        # 4. Заглушки, если не хватает картинок
+        # fallback
         if len(image_base64_list) < 2:
-            log_info("Insufficient images from API, using fallback.")
             fallback_base64 = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
             while len(image_base64_list) < 2:
                 image_base64_list.append(fallback_base64)
@@ -317,15 +248,16 @@ def generate():
         log_error(f"Generate error: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
+# --- ЭНДПОИНТ ОТПРАВКИ ЗАКАЗА ---
 @app.route('/send-order', methods=['POST'])
 def send_order():
     try:
         data = request.get_json()
         log_info("Send-order request received.")
 
-        required_fields = ['image_base64', 'name', 'contact', 'order_details', 'selected_design']
-        if not all(field in data for field in required_fields):
-            missing = [f for f in required_fields if f not in data]
+        required = ['image_base64', 'name', 'contact', 'order_details', 'selected_design']
+        if not all(field in data for field in required):
+            missing = [f for f in required if f not in data]
             return jsonify({'error': f'Missing fields: {missing}'}), 400
 
         image_base64 = data['image_base64']
@@ -339,10 +271,9 @@ def send_order():
 
         try:
             image_data = base64.b64decode(image_base64)
-        except Exception as e:
+        except:
             return jsonify({'error': 'Invalid image data'}), 400
 
-        # Формируем сообщение для Telegram
         caption = f"""📦 *Nouvelle commande (Victoria Pâtisserie)*
 👤 *Nom Client:* {name}
 📱 *Contact:* {contact}
@@ -364,17 +295,63 @@ _En attente de validation par le Chef._"""
         if response.status_code == 200:
             return jsonify({'success': True}), 200
         else:
-            log_error(f"Telegram API error: {response.status_code} - {response.text}")
+            log_error(f"Telegram API error: {response.text}")
             return jsonify({'error': 'Failed to send to Telegram'}), 500
 
     except Exception as e:
         log_error(f"Send-order error: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
+# --- НОВЫЙ ЭНДПОИНТ ДЛЯ ЗАГРУЗКИ ФОТО ---
+@app.route('/upload-order', methods=['POST'])
+def upload_order():
+    try:
+        # Принимаем multipart/form-data
+        name = request.form.get('name')
+        contact = request.form.get('contact')
+        description = request.form.get('description', '')
+        photo = request.files.get('photo')
+
+        if not all([name, contact, photo]):
+            return jsonify({'error': 'Missing fields'}), 400
+
+        # Читаем фото в байты
+        photo_bytes = photo.read()
+
+        caption = f"""📸 *Nouvelle commande (photo personnelle)*
+👤 *Nom Client:* {name}
+📱 *Contact:* {contact}
+📝 *Description:*
+{description}
+_En attente de validation par le Chef._"""
+
+        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendPhoto"
+        files = {'photo': ('photo.jpg', photo_bytes, photo.mimetype)}
+        payload = {
+            'chat_id': TELEGRAM_CHAT_ID,
+            'caption': caption,
+            'parse_mode': 'Markdown'
+        }
+
+        response = requests.post(url, files=files, data=payload)
+
+        if response.status_code == 200:
+            return jsonify({'success': True}), 200
+        else:
+            log_error(f"Telegram API error: {response.text}")
+            return jsonify({'error': 'Failed to send to Telegram'}), 500
+
+    except Exception as e:
+        log_error(f"Upload-order error: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
 @app.route('/health', methods=['GET'])
 def health():
-    return jsonify({'status': 'running', 'platform': 'Hybrid'}), 200
+    return jsonify({'status': 'running'}), 200
 
+@app.route('/', methods=['GET'])
+def index():
+    return jsonify({'service': 'Victoria Cake API', 'status': 'running'}), 200
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 10000))
