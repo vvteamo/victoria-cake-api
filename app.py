@@ -7,15 +7,14 @@ import re
 from datetime import datetime, timedelta
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-# Для конвертации base64 нам все еще нужны Image и io
 from PIL import Image
 import io
 from deep_translator import GoogleTranslator
 
 # --- ИНИЦИАЛИЗАЦИЯ ---
 app = Flask(__name__)
-# Разрешаем запросы только с твоего сайта (CORS для безопасности)
-CORS(app, resources={r"/generate": {"origins": "https://vvteamo.github.io"}})
+# ИСПРАВЛЕНИЕ CORS: разрешаем отправку на все пути, включая /send-order
+CORS(app, resources={r"/*": {"origins": "https://vvteamo.github.io"}})
 
 # Настройка логирования
 logging.basicConfig(
@@ -32,7 +31,6 @@ TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN')
 TELEGRAM_CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID')
 WAVESPEED_API_KEY = os.environ.get('WAVESPEED_API_KEY')
 WAVESPEED_API_URL = "https://api.wavespeed.ai/api/v3/wavespeed-ai/flux-dev"
-# ПУТЬ К ШРИФТУ БОЛЬШЕ НЕ НУЖЕН
 
 # --- СЛОВАРИ ДЛЯ ПЕРЕВОДА И ШАБЛОНИЗАТОРА ---
 EVENT_MAP = {
@@ -44,7 +42,6 @@ EVENT_MAP = {
     "Autre": "celebration"
 }
 
-# Обновленные, детализированные стили для нейросети
 STYLE_MAP = {
     "Minimaliste": "smooth clean fondant, sharp edges, pure minimalist aesthetic, modern elegance",
     "Classique Chic": "classic elegant structure, delicate royal icing piping, timeless luxury, satin ribbon details, haute couture pastry",
@@ -53,7 +50,6 @@ STYLE_MAP = {
     "Sur mesure": "custom bespoke design, highly detailed, unique creative masterpiece"
 }
 
-# ШАБЛОНЫ (Скелеты) для разных событий
 EVENT_TEMPLATES = {
     "Mariage": (
         "{shape_part} Style and texture: {style_desc}. "
@@ -95,7 +91,6 @@ EVENT_TEMPLATES = {
 
 # --- ФУНКЦИЯ ЭКРАНИРОВАНИЯ ТЕКСТА ДЛЯ TELEGRAM ---
 def escape_markdown(text):
-    """Экранирует специальные символы Markdown, чтобы Telegram не ломался."""
     special_chars = ['_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!']
     for char in special_chars:
         text = text.replace(char, f'\\{char}')
@@ -103,7 +98,6 @@ def escape_markdown(text):
 
 # --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ---
 def download_image_as_pil(image_url):
-    """Скачивает изображение по URL и возвращает PIL Image."""
     try:
         response = requests.get(image_url, timeout=30)
         if response.status_code == 200:
@@ -116,14 +110,12 @@ def download_image_as_pil(image_url):
         return None
 
 def pil_to_base64(pil_image):
-    """Конвертирует PIL Image в base64."""
     buffered = io.BytesIO()
     pil_image.save(buffered, format="PNG")
     image_base64 = base64.b64encode(buffered.getvalue()).decode('utf-8')
     return f"data:image/png;base64,{image_base64}"
 
 def wait_for_image_pil(result_url, max_attempts=60, delay=2):
-    """Опрашивает Wavespeed до готовности изображения, возвращает PIL Image."""
     headers = {'Authorization': f'Bearer {WAVESPEED_API_KEY}'}
     for attempt in range(max_attempts):
         try:
@@ -147,7 +139,6 @@ def wait_for_image_pil(result_url, max_attempts=60, delay=2):
     return None
 
 def generate_parallel_variations(payloads, headers):
-    """Запускает две генерации и собирает результаты."""
     task_urls = []
     for payload in payloads:
         response = requests.post(WAVESPEED_API_URL, headers=headers, json=payload)
@@ -165,7 +156,6 @@ def generate_parallel_variations(payloads, headers):
 
 # --- ПАРСИНГ ПОЖЕЛАНИЙ ---
 def parse_wishes(wishes):
-    """Превращает свободный текст на французском в структурированные инструкции на английском."""
     parsed = {
         'color': '',
         'decor': [],
@@ -179,7 +169,6 @@ def parse_wishes(wishes):
     
     wishes_lower = wishes.lower()
     
-    # Ищем цвет
     color_map = {
         'lavande': 'lavender',
         'violet': 'purple',
@@ -200,12 +189,10 @@ def parse_wishes(wishes):
             parsed['color'] = en_color
             break
     
-    # Ищем ленты
     ribbon_keywords = ['ruban', 'rubans', 'satin', 'nœud', 'neoud', 'bow']
     if any(keyword in wishes_lower for keyword in ribbon_keywords):
         parsed['ribbons'] = 'with elegant satin ribbons tied in a bow at the base'
     
-    # Ищем конкретные растения
     if 'lavande' in wishes_lower:
         parsed['decor'].append('fresh sprigs of lavender')
     if 'menthe' in wishes_lower:
@@ -217,22 +204,20 @@ def parse_wishes(wishes):
     
     return parsed
 
-# --- ПОСТРОЕНИЕ ПРОМПТА (ОБНОВЛЕНО: ТЕКСТ ДОВЕРЯЕМ ИИ) ---
+# --- ПОСТРОЕНИЕ ПРОМПТА ---
 def remove_emojis(text):
-    """Удаляет эмодзи из строки перед передачей в промпт ИИ."""
     emoji_pattern = re.compile(
         "["
-        "\U0001f600-\U0001f64f"  # emoticons
-        "\U0001f300-\U0001f5ff"  # symbols & pictographs
-        "\U0001f680-\U0001f6ff"  # transport & map symbols
-        "\U0001f1e0-\U0001f1ff"  # flags (iOS)
+        "\U0001f600-\U0001f64f"
+        "\U0001f300-\U0001f5ff"
+        "\U0001f680-\U0001f6ff"
+        "\U0001f1e0-\U0001f1ff"
         "\U00002702-\U000027b0"
         "\U000024c2-\U0001f251"
         "]+", flags=re.UNICODE)
     return emoji_pattern.sub(r'', text)
 
 def build_prompt(data):
-    """Собирает промпт с использованием шаблонизатора и распарсенных данных."""
     etages_raw = data.get('etages', '1 étage')
     etages = etages_raw.split()[0] if etages_raw else '1'
     style = data.get('style', 'Classique Chic')
@@ -241,7 +226,6 @@ def build_prompt(data):
     shape_details = data.get('shapeDetails', '').strip()
     wishes_fr = data.get('wishes', '').strip()
     
-    # Чистим текст клиента от эмодзи перед передачей в ИИ
     inscription = data.get('inscription', '').strip()
     cleaned_inscription = remove_emojis(inscription).strip()
     
@@ -249,13 +233,20 @@ def build_prompt(data):
     style_desc = STYLE_MAP.get(style, STYLE_MAP["Classique Chic"])
     wishes_lower_fr = wishes_fr.lower() if wishes_fr else ""
 
-    # Парсим пожелания (вытаскиваем цвета, ленты, растения)
     parsed = parse_wishes(wishes_fr) if wishes_fr else {}
 
-    # 1. Логотип (топпер) - оставляем ИИ
-    topper = "On top of the cake, there is an elegant gold topper with the text 'Victoria'."
+    # 1. УМНАЯ ЛОГИКА БРЕНДИНГА (Топпер или Гравировка)
+    topper = ""
+    branding_details = ""
+    
+    if cleaned_inscription:
+        # Если есть надпись клиента: топпера нет, делаем гравировку на подставке
+        branding_details = "The cake is presented on a thick, premium cake board. The logo 'Victoria' is elegantly engraved or embossed on the side of this thick cake board."
+    else:
+        # Если надписи нет: классический золотой топпер
+        topper = "On top of the cake, there is an elegant gold topper with the text 'Victoria'."
 
-    # 2. База формы (shape_part)
+    # 2. База формы
     if shape_type == 'classic_circle':
         shape_part = f"A hyper-realistic photograph of a {etages}-tier {event_en} cake."
     elif shape_type == 'classic_square':
@@ -265,46 +256,41 @@ def build_prompt(data):
     elif shape_type == 'number':
         number = shape_details if shape_details else "0"
         shape_part = f"A hyper-realistic cake in the shape of the number {number}, consisting of two separate digits standing side by side on a cake board. The digits are made of cake."
-        topper = "" # Для цифр топпер обычно не нужен
+        topper = "" 
     else:
         desc = shape_details if shape_details else "custom shape"
         shape_part = f"A hyper-realistic photograph of a {etages}-tier {event_en} cake in the shape of {desc}."
 
-    # 3. УМНЫЙ ПАРСИНГ ДЕТАЛЕЙ (details)
+    # 3. Детали
     details_parts = []
     
-    # 3.1. Обработка цвета frosting
     if parsed and parsed.get('color'):
         details_parts.append(f"The cake has a textured {parsed['color']}-colored buttercream frosting with visible piping.")
     
-    # 3.2. Обработка НАДПИСИ (ФИЗИЧЕСКИ НА ТОРТЕ)
     if cleaned_inscription:
-        # ИИ напишет этот текст шоколадным курсивом прямо на ярусе
-        details_parts.append(f"The name '{cleaned_inscription}' is elegantly written in chocolate script on the cake.")
+        details_parts.append(f"The name '{cleaned_inscription}' is elegantly written in chocolate or icing on the cake.")
+        
+    if branding_details:
+        details_parts.append(branding_details)
 
-    # 3.3. Обработка конкретных растений (если нашли через парсер)
     if parsed and parsed.get('decor'):
         decor_str = " and ".join(parsed['decor'])
         details_parts.append(f"The cake is decorated with {decor_str} placed on top and around the base.")
     elif wishes_fr and not parsed.get('decor'):
-        # Если не нашли конкретных растений, умно переводим сырой текст целиком
         try:
             wishes_en = GoogleTranslator(source='auto', target='en').translate(wishes_fr)
             details_parts.append(f"The cake incorporates: {wishes_en}.")
         except:
             details_parts.append(f"The cake incorporates: {wishes_fr}.")
 
-    # 3.4. Обработка текстуры
     if wishes_lower_fr and ('crème' in wishes_lower_fr or 'creme' in wishes_lower_fr or 'décor' in wishes_lower_fr or 'decor' in wishes_lower_fr):
         details_parts.append("The cake has decorative piped buttercream borders and swirls.")
 
-    # 3.5. Обработка лент
     if parsed and parsed.get('ribbons'):
         details_parts.append(parsed['ribbons'])
 
     details_str = " ".join(details_parts)
     
-    # 3.6. Обязательный модификатор текстуры крема и минимализма
     texture_modifiers = []
     if "minimaliste" in wishes_lower_fr or "minimalist" in wishes_lower_fr:
         texture_modifiers.append("minimalist elegant decor")
@@ -315,10 +301,8 @@ def build_prompt(data):
     if final_modifiers not in details_str:
         details_str += f" {final_modifiers}."
 
-    # 4. ШАБЛОНИЗАЦИЯ: выбираем скелет промпта в зависимости от события
     template = EVENT_TEMPLATES.get(event, EVENT_TEMPLATES["Autre"])
     
-    # Вставляем все наши кусочки в шаблон
     prompt = template.format(
         shape_part=shape_part,
         style_desc=style_desc,
@@ -326,13 +310,9 @@ def build_prompt(data):
         topper=topper
     )
 
-    # Убираем лишние двойные пробелы
     prompt = " ".join(prompt.split())
-    
-    log_info(f"Generated structured prompt with built-in text: {prompt}")
+    log_info(f"Generated prompt: {prompt}")
     return prompt, shape_type
-
-# --- НАЛОЖЕНИЕ ТЕКСТА БОЛЬШЕ НЕ НУЖНО ( Pillow функция удалена) ---
 
 # --- NEGATIVE PROMPT ---
 def get_negative_prompt():
@@ -353,7 +333,6 @@ def generate():
 
         prompt, shape_type = build_prompt(data)
         negative_prompt = get_negative_prompt()
-        # НАДПИСЬ БОЛЬШЕ НЕ ЗАПРАШИВАЕМ, ОНА УЖЕ В build_prompt ЧЕРЕЗ cleaned_inscription
 
         headers = {
             'Authorization': f'Bearer {WAVESPEED_API_KEY}',
@@ -378,7 +357,6 @@ def generate():
 
         image_base64_list = []
         for pil_image in pil_images_raw:
-            # Изображение, полученное от Wavespeed, уже содержит текст
             base64_string = pil_to_base64(pil_image)
             image_base64_list.append(base64_string)
 
@@ -393,7 +371,7 @@ def generate():
         log_error(f"Generate error: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
-# --- ОТПРАВКА ЗАКАЗА (ПУТЬ А) ---
+# --- ОТПРАВКА ЗАКАЗА ---
 @app.route('/send-order', methods=['POST'])
 def send_order():
     try:
@@ -411,7 +389,6 @@ def send_order():
         order_details = data['order_details']
         selected_design = data['selected_design']
 
-        # Экранируем спецсимволы Markdown
         safe_order_details = escape_markdown(order_details)
 
         if ',' in image_base64:
@@ -450,7 +427,7 @@ _En attente de validation par le Chef._"""
         log_error(f"Send-order error: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
-# --- ЗАГРУЗКА ФОТО (ПУТЬ Б) ---
+# --- ЗАГРУЗКА ФОТО ---
 @app.route('/upload-order', methods=['POST'])
 def upload_order():
     try:
