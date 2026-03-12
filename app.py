@@ -150,7 +150,6 @@ def generate_parallel_variations(payloads, headers):
 def add_logo_watermark(base_image):
     """Берет логотип из локальной папки сервера (logo.png)."""
     try:
-        # Ищем файл logo.png в той же папке, где лежит app.py
         logo_path = os.path.join(os.path.dirname(__file__), 'logo.png')
         
         if not os.path.exists(logo_path):
@@ -166,14 +165,11 @@ def add_logo_watermark(base_image):
         w_height = int((float(watermark.size[1]) * float(w_percent)))
         watermark = watermark.resize((w_width, w_height), Image.Resampling.LANCZOS)
         
-        # Конвертируем основное фото в RGBA для наложения
         if base_image.mode != 'RGBA':
             base_image = base_image.convert('RGBA')
             
-        # Позиция: левый верхний угол (отступ 40px)
         position = (40, 40)
         
-        # Накладываем прозрачный логотип
         transparent = Image.new('RGBA', base_image.size, (0,0,0,0))
         transparent.paste(base_image, (0,0))
         transparent.paste(watermark, position, mask=watermark)
@@ -308,7 +304,6 @@ def generate():
 
         image_base64_list = []
         for pil_image in pil_images_raw:
-            # СТАВИМ ВОДЯНОЙ ЗНАК ПЕРЕД КОНВЕРТАЦИЕЙ
             watermarked_image = add_logo_watermark(pil_image)
             base64_string = pil_to_base64(watermarked_image)
             image_base64_list.append(base64_string)
@@ -328,23 +323,38 @@ def generate():
 def send_order():
     try:
         data = request.get_json()
-        required = ['image_base64', 'name', 'contact', 'order_details', 'selected_design']
-        if not all(field in data for field in required):
-            return jsonify({'error': 'Missing fields'}), 400
+        
+        # Получаем данные, учитывая, что фронтенд их обязательно присылает
+        image_base64 = data.get('image_base64', '')
+        name = data.get('name', 'Не указано')
+        contact = data.get('contact', 'Не указано')
+        date = data.get('date', 'Не указана')
+        guests = data.get('guests', 'Не указано')
+        order_details = data.get('order_details', '')
+        selected_design = data.get('selected_design', 'Дизайн')
 
-        image_base64 = data['image_base64']
         if ',' in image_base64:
             image_base64 = image_base64.split(',')[1]
 
         image_data = base64.b64decode(image_base64)
 
-        caption = f"""📦 *Nouvelle commande (Victoria Pâtisserie)*
-👤 *Nom Client:* {data['name']}
-📱 *Contact:* {data['contact']}
-✨ *Design choisi:* {data['selected_design']}
-📝 *Détails de la commande:*
-{escape_markdown(data['order_details'])}
-_En attente de validation par le Chef._"""
+        # Автоперевод деталей на русский
+        try:
+            details_ru = GoogleTranslator(source='auto', target='ru').translate(order_details) if order_details else "Нет описания"
+        except:
+            details_ru = order_details
+
+        caption = f"""📦 *Новый заказ (Сгенерировано ИИ)*
+👤 *Имя клиента:* {name}
+📱 *Контакт:* {contact}
+👥 *Количество гостей:* {guests}
+📅 *Дата мероприятия:* {date}
+✨ *Выбранный дизайн:* {selected_design}
+
+📝 *Детали заказа (автоперевод):*
+{escape_markdown(details_ru)}
+
+_Ожидает подтверждения Шефом._"""
 
         url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendPhoto"
         files = {'photo': ('cake_design.png', image_data, 'image/png')}
@@ -361,26 +371,34 @@ _En attente de validation par le Chef._"""
 @app.route('/upload-order', methods=['POST'])
 def upload_order():
     try:
-        name = request.form.get('name')
-        contact = request.form.get('contact')
-        guests = request.form.get('guests')
-        date = request.form.get('date')
+        name = request.form.get('name', 'Не указано')
+        contact = request.form.get('contact', 'Не указано')
+        guests = request.form.get('guests', 'Не указано')
+        date = request.form.get('date', 'Не указана')
         description = request.form.get('description', '')
         photo = request.files.get('photo')
 
-        if not all([name, contact, guests, date, photo]):
-            return jsonify({'error': 'Missing required fields'}), 400
+        if not photo:
+            return jsonify({'error': 'Missing photo'}), 400
 
         photo_bytes = photo.read()
         
-        caption = f"""📸 *Nouvelle commande (photo personnelle)*
-👤 *Nom Client:* {name}
-📱 *Contact:* {contact}
-👥 *Nombre d'invités:* {guests}
-📅 *Date de l'événement:* {date}
-📝 *Description:*
-{escape_markdown(description)}
-_En attente de validation par le Chef._"""
+        # Автоперевод описания на русский
+        try:
+            desc_ru = GoogleTranslator(source='auto', target='ru').translate(description) if description else "Нет описания"
+        except:
+            desc_ru = description
+        
+        caption = f"""📸 *Новый заказ (Свое фото)*
+👤 *Имя клиента:* {name}
+📱 *Контакт:* {contact}
+👥 *Количество гостей:* {guests}
+📅 *Дата мероприятия:* {date}
+
+📝 *Описание (автоперевод):*
+{escape_markdown(desc_ru)}
+
+_Ожидает подтверждения Шефом._"""
 
         url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendPhoto"
         files = {'photo': ('photo.jpg', photo_bytes, photo.mimetype)}
