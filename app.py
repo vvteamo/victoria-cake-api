@@ -8,6 +8,7 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 from PIL import Image, ImageDraw, ImageFont
 import io
+from deep_translator import GoogleTranslator
 
 # --- ИНИЦИАЛИЗАЦИЯ ---
 app = Flask(__name__)
@@ -30,7 +31,7 @@ WAVESPEED_API_KEY = os.environ.get('WAVESPEED_API_KEY')
 WAVESPEED_API_URL = "https://api.wavespeed.ai/api/v3/wavespeed-ai/flux-dev"
 FONT_PATH = os.environ.get('FONT_PATH', 'fonts/GreatVibes-Regular.ttf')
 
-# --- СЛОВАРИ ДЛЯ ПЕРЕВОДА ---
+# --- СЛОВАРИ ДЛЯ ПЕРЕВОДА И ШАБЛОНИЗАТОРА ---
 EVENT_MAP = {
     "Mariage": "wedding",
     "Anniversaire adulte": "adult birthday",
@@ -40,12 +41,53 @@ EVENT_MAP = {
     "Autre": "celebration"
 }
 
+# Обновленные, детализированные стили
 STYLE_MAP = {
-    "Minimaliste": "minimalistic white fondant, clean geometric lines, smooth satin finish",
-    "Classique Chic": "classic chic, smooth royal icing, elegant refined piping patterns",
-    "Floral / Romantique": "romantic, realistic sugar flowers, cascading petals, velvet texture frosting",
-    "Artistique": "artistic, watercolor-style edible paint, abstract patterns, textured buttercream",
-    "Sur mesure": "custom designed"
+    "Minimaliste": "smooth clean fondant, sharp edges, pure minimalist aesthetic, modern elegance",
+    "Classique Chic": "classic elegant structure, delicate royal icing piping, timeless luxury, haute couture pastry",
+    "Floral / Romantique": "adorned with hyperrealistic handcrafted sugar flowers, soft pastel tones, romantic cascading petals",
+    "Artistique": "avant-garde sculptural shapes, hand-painted watercolor textures, edible gold leaf splashes, modern art concept",
+    "Sur mesure": "custom bespoke design, highly detailed, unique creative masterpiece"
+}
+
+# ШАБЛОНЫ (Скелеты) для разных событий
+EVENT_TEMPLATES = {
+    "Mariage": (
+        "{shape_part} Style and texture: {style_desc}. "
+        "{details} "
+        "Professional wedding photography, soft romantic lighting, set on an elegant reception table, blurred background of the Mediterranean Sea, 8k resolution, photorealistic. "
+        "{topper}"
+    ),
+    "Anniversaire adulte": (
+        "{shape_part} Style and texture: {style_desc}. "
+        "{details} "
+        "High-end food photography, moody studio lighting, dark elegant background, highly detailed, sophisticated atmosphere. "
+        "{topper}"
+    ),
+    "Anniversaire enfant": (
+        "{shape_part} Style: {style_desc}. "
+        "{details} "
+        "Bright and joyful colors, playful design, fairy-tale atmosphere, sharp focus, vibrant food photography, party setting. "
+        "{topper}"
+    ),
+    "Baptême": (
+        "{shape_part} Style and texture: {style_desc}. "
+        "{details} "
+        "Soft pastel tones, bright airy lighting, elegant pure presentation, hyperrealistic, delicate atmosphere. "
+        "{topper}"
+    ),
+    "Fête corporative": (
+        "{shape_part} Style: {style_desc}. "
+        "{details} "
+        "Clean corporate aesthetic, sharp studio lighting, modern presentation, polished marble table, 8k. "
+        "{topper}"
+    ),
+    "Autre": (
+        "{shape_part} Visual style: {style_desc}. "
+        "{details} "
+        "Cinematic studio lighting, 8k resolution, food photography, placed on a polished marble table. "
+        "{topper}"
+    )
 }
 
 # --- ФУНКЦИЯ ЭКРАНИРОВАНИЯ ТЕКСТА ДЛЯ TELEGRAM ---
@@ -172,9 +214,9 @@ def parse_wishes(wishes):
     
     return parsed
 
-# --- ПОСТРОЕНИЕ ПРОМПТА ---
+# --- ПОСТРОЕНИЕ ПРОМПТА (ОБНОВЛЕНО С ШАБЛОНИЗАТОРОМ) ---
 def build_prompt(data):
-    """Собирает жёсткий, конкретный промпт."""
+    """Собирает промпт с использованием шаблонизатора и распарсенных данных."""
     etages_raw = data.get('etages', '1 étage')
     etages = etages_raw.split()[0] if etages_raw else '1'
     style = data.get('style', 'Classique Chic')
@@ -184,20 +226,17 @@ def build_prompt(data):
     wishes = data.get('wishes', '').strip()
     inscription = data.get('inscription', '').strip()
 
-    event_en = EVENT_MAP.get(event, event)
-    style_desc = STYLE_MAP.get(style, f"{style} style frosting")
+    event_en = EVENT_MAP.get(event, 'celebration')
+    style_desc = STYLE_MAP.get(style, STYLE_MAP["Classique Chic"])
     wishes_lower = wishes.lower() if wishes else ""
 
-    # Парсим пожелания
+    # Парсим пожелания (вытаскиваем цвета, ленты, растения)
     parsed = parse_wishes(wishes) if wishes else {}
 
-    # Базовая часть
-    base = f"placed on a polished marble table. Background is a blurred, sunlit view of the Mediterranean Sea in Nice, France. Soft natural daylight, professional food photography, 8k resolution, sharp focus, detailed textures."
-
-    # Логотип
+    # 1. Логотип (топпер)
     topper = "On top of the cake, there is an elegant gold topper with the text 'Victoria'."
 
-    # Форма торта
+    # 2. База формы (shape_part)
     if shape_type == 'classic_circle':
         shape_part = f"A hyper-realistic photograph of a {etages}-tier {event_en} cake."
     elif shape_type == 'classic_square':
@@ -207,44 +246,55 @@ def build_prompt(data):
     elif shape_type == 'number':
         number = shape_details if shape_details else "0"
         shape_part = f"A hyper-realistic cake in the shape of the number {number}, consisting of two separate digits standing side by side on a cake board. The digits are made of cake."
-        topper = ""
+        topper = "" # Для цифр топпер обычно не нужен
     else:
         desc = shape_details if shape_details else "custom shape"
         shape_part = f"A hyper-realistic photograph of a {etages}-tier {event_en} cake in the shape of {desc}."
 
-    # Собираем части
-    parts = [shape_part]
-
-    # Цвет
+    # 3. Формируем детали (details) на основе парсинга
+    details_parts = []
+    
     if parsed and parsed.get('color'):
-        parts.append(f"The cake has a textured {parsed['color']}-colored buttercream frosting with visible piping.")
-    else:
-        parts.append(f"The cake has a textured {style_desc} finish with visible piping.")
-
-    # Растения
+        details_parts.append(f"The cake has a textured {parsed['color']}-colored buttercream frosting with visible piping.")
+    
     if parsed and parsed.get('decor'):
         decor_str = " and ".join(parsed['decor'])
-        parts.append(f"The cake is decorated with {decor_str} placed on top and around the base.")
+        details_parts.append(f"The cake is decorated with {decor_str} placed on top and around the base.")
     elif wishes and not parsed.get('decor'):
-        parts.append(f"The cake incorporates: {wishes}.")
+        # Если не нашли конкретных растений, умно переводим сырой текст
+        try:
+            wishes_en = GoogleTranslator(source='auto', target='en').translate(wishes)
+            details_parts.append(f"The cake incorporates: {wishes_en}.")
+        except:
+            details_parts.append(f"The cake incorporates: {wishes}.")
 
-    # Текстура крема
     if wishes_lower and ('crème' in wishes_lower or 'creme' in wishes_lower or 'décor' in wishes_lower or 'decor' in wishes_lower):
-        parts.append("The cake has decorative piped buttercream borders and swirls, with a rustic textured finish.")
+        details_parts.append("The cake has decorative piped buttercream borders and swirls.")
 
-    # Ленты
     if parsed and parsed.get('ribbons'):
-        parts.append(parsed['ribbons'])
+        details_parts.append(parsed['ribbons'])
 
-    # База
-    parts.append(base)
+    details_str = " ".join(details_parts)
+    
+    # Обязательный модификатор текстуры крема
+    if "RUSTIC, HIGHLY TEXTURED" not in details_str:
+        details_str += " RUSTIC, HIGHLY TEXTURED, detailed icing."
 
-    # Топпер
-    if topper:
-        parts.append(topper)
+    # 4. ШАБЛОНИЗАЦИЯ: выбираем скелет промпта в зависимости от события
+    template = EVENT_TEMPLATES.get(event, EVENT_TEMPLATES["Autre"])
+    
+    # Вставляем все наши кусочки в шаблон
+    prompt = template.format(
+        shape_part=shape_part,
+        style_desc=style_desc,
+        details=details_str,
+        topper=topper
+    )
 
-    prompt = " ".join(parts)
-    log_info(f"Generated prompt: {prompt}")
+    # Убираем лишние двойные пробелы
+    prompt = " ".join(prompt.split())
+    
+    log_info(f"Generated structured prompt: {prompt}")
     return prompt, shape_type
 
 # --- НАЛОЖЕНИЕ ТЕКСТА ---
