@@ -146,12 +146,16 @@ def generate_parallel_variations(payloads, headers):
             pil_images.append(image)
     return pil_images
 
-# --- ВОДЯНОЙ ЗНАК (НОВАЯ ФУНКЦИЯ) ---
+# --- ВОДЯНОЙ ЗНАК ---
 def add_logo_watermark(base_image):
-    """Скачивает логотип с твоего сайта и ставит его в левый верхний угол."""
+    """Скачивает логотип с сайта под маской браузера и ставит его в левый верхний угол."""
     try:
         logo_url = "https://vvteamo.github.io/img/logo.png"
-        response = requests.get(logo_url, timeout=10)
+        
+        # Маскируемся под обычный браузер (Chrome), чтобы GitHub нас не заблокировал
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
+        response = requests.get(logo_url, headers=headers, timeout=10)
+        
         if response.status_code == 200:
             watermark = Image.open(io.BytesIO(response.content)).convert("RGBA")
             
@@ -174,9 +178,12 @@ def add_logo_watermark(base_image):
             transparent.paste(base_image, (0,0))
             transparent.paste(watermark, position, mask=watermark)
             
+            log_info("Watermark successfully added!")
             return transparent.convert("RGB")
+        else:
+            log_error(f"GitHub заблокировал скачивание логотипа. Код ответа: {response.status_code}")
     except Exception as e:
-        log_error(f"Failed to add watermark: {e}")
+        log_error(f"Ошибка наложения водяного знака: {e}")
     
     return base_image.convert("RGB")
 
@@ -209,10 +216,9 @@ def build_prompt(data):
 
     topper = ""
     if not cleaned_inscription:
-        # Топпер Victoria ставим ТОЛЬКО если клиент ничего не написал
         topper = "On top of the cake, there is an elegant gold topper with the text 'Victoria'."
 
-    # База формы (ОБНОВЛЕННАЯ ФИЗИКА ЦИФР)
+    # База формы
     if shape_type == 'classic_circle':
         shape_part = f"A hyper-realistic photograph of a {etages}-tier {event_en} cake."
     elif shape_type == 'classic_square':
@@ -221,7 +227,6 @@ def build_prompt(data):
         shape_part = f"A hyper-realistic photograph of a {etages}-tier rectangular {event_en} cake."
     elif shape_type == 'number':
         number = shape_details if shape_details else "0"
-        # ЗАСТАВЛЯЕМ ЦИФРЫ ЛЕЖАТЬ
         shape_part = f"A hyper-realistic photograph of a number cake in the shape of the number {number}. The cake is LYING FLAT horizontally on the cake board, tart style, viewed from slightly above. The digits are made of cake layers and cream."
         topper = "" 
     else:
@@ -230,9 +235,9 @@ def build_prompt(data):
 
     details_parts = []
     
-    # ИИ пишет ТОЛЬКО текст клиента (если он есть). Гравировку убрали, чтобы не путать ИИ.
+    # ИИ пишет ТОЛЬКО текст клиента. Жестко запрещаем писать на подставке.
     if cleaned_inscription:
-        details_parts.append(f"The name '{cleaned_inscription}' is elegantly written in chocolate or icing directly on the cake.")
+        details_parts.append(f"The name '{cleaned_inscription}' is elegantly written in chocolate or icing ON THE CAKE ITSELF (placed on top of the cake layers or on the side of the cake, strictly NOT on the board and NOT on the plate).")
 
     if wishes_fr:
         try:
@@ -271,6 +276,7 @@ def get_negative_prompt():
         "plastic texture, toy-like, synthetic, non-edible materials, weird shapes, extra items on cake, "
         "people, hands, faces, animals, low resolution, bad lighting, no topper unless specified, "
         "no abstract flowers, no fantasy plants, standing numbers, vertical numbers, "
+        "text on the board, writing on the board, text on the plate, writing on the plate, letters on the tray, "
         "no smooth surface, no perfect smooth fondant, no glossy finish"
     )
 
@@ -355,7 +361,6 @@ _En attente de validation par le Chef._"""
 
 @app.route('/upload-order', methods=['POST'])
 def upload_order():
-    # Эта функция остается без изменений, она отлично работает
     try:
         name = request.form.get('name')
         contact = request.form.get('contact')
