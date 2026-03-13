@@ -13,7 +13,7 @@ from deep_translator import GoogleTranslator
 
 # --- ИНИЦИАЛИЗАЦИЯ ---
 app = Flask(__name__)
-CORS(app, resources={r"/*": {"origins": "https://vvteamo.github.io"}})
+CORS(app, resources={r"/*": {"origins": ["https://vvteamo.github.io", "https://atelier-patisserie.profy.top"]}})
 
 logging.basicConfig(
     level=logging.INFO,
@@ -421,3 +421,4 @@ def index(): return jsonify({'service': 'Victoria Cake API'}), 200
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 10000))
     app.run(host='0.0.0.0', port=port)
+
