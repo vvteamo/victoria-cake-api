@@ -203,8 +203,11 @@ def build_prompt(data):
     if not cleaned_inscription:
         topper = "On top of the cake, there is an elegant gold topper with the text 'Victoria'."
 
-    # Заменяем "1-tier" на более понятное ИИ "single tier"
-    etages_text = f"{etages}-tier" if etages != "1" else "SINGLE tier"
+    # === ХИТРОСТЬ ДЛЯ 1 ЭТАЖА: ВООБЩЕ УДАЛЯЕМ СЛОВО "TIER" ===
+    if etages == "1":
+        etages_text = "single-level flat"
+    else:
+        etages_text = f"{etages}-tier"
 
     if shape_type == 'classic_circle':
         shape_part = f"A hyper-realistic photograph of a {etages_text} {event_en} cake."
@@ -232,11 +235,11 @@ def build_prompt(data):
         except:
             details_parts.append(f"The cake incorporates: {wishes_fr}.")
 
-    # Строгие текстовые команды в промпт
+    # Строгие текстовые команды в промпт без слова TIER для 1 этажа
     if shape_type == 'number':
         details_parts.append("FLAT CAKE, ZERO TIERS, NO TIERS, NOT A TIERED CAKE, SINGLE FLAT STRUCTURE.")
     elif etages == "1":
-        details_parts.append("EXACTLY ONE TIER CAKE, ONLY ONE LEVEL, ABSOLUTELY NO ADDED TIERS, SINGLE LAYER DESIGN, NOT A MULTI-TIER CAKE.")
+        details_parts.append("A SIMPLE SINGLE-LEVEL CAKE. JUST ONE WIDE BASE CAKE. LOW PROFILE. ABSOLUTELY NO LAYERS ON TOP.")
     elif etages == "2":
         details_parts.append("EXACTLY TWO TIERS CAKE, ONLY 2 LEVELS, STRICTLY TWO TIERS.")
     elif etages == "3":
@@ -279,13 +282,13 @@ def get_negative_prompt(shape_type, etages):
     
     # Жесткие запреты для ИИ: чего НЕ должно быть на картинке
     if shape_type == 'number':
-        base_neg += ", tiered cake, stacked cake, tall cake, multi-tier, 2 tiers, 3 tiers, vertical cake"
+        base_neg += ", tiered cake, stacked cake, tall cake, multi-tier, 2 tiers, 3 tiers, vertical cake, tower"
     elif etages == "1":
-        base_neg += ", multi-tier cake, multiple tiers, 2 tiers, 3 tiers, 4 tiers, tall stacked cake, multi-level"
+        base_neg += ", tiered cake, stacked cake, multi-tier, tower cake, tall cake, layers on top of each other, 2 tiers, 3 tiers, wedding tower, multiple levels"
     elif etages == "2":
-        base_neg += ", single tier, 1 tier, flat cake, 3 tiers, 4 tiers"
+        base_neg += ", single tier, 1 tier, flat cake, 3 tiers, 4 tiers, 5 tiers"
     elif etages == "3":
-        base_neg += ", single tier, 1 tier, 2 tiers, 4 tiers"
+        base_neg += ", single tier, 1 tier, 2 tiers, 4 tiers, 5 tiers"
         
     return base_neg
 
