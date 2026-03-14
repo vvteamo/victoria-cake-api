@@ -240,6 +240,23 @@ def build_prompt(data):
         except:
             details_parts.append(f"The cake incorporates: {wishes_fr}.")
 
+    # === НАЧАЛО: ЖЕСТКАЯ ЛОГИКА ЭТАЖЕЙ ===
+    # Эта логика применяет бетонные ограничения по этажам в зависимости от выбора,
+    # а для цифр вообще отключает понятие этажности.
+    if shape_type == 'number':
+        details_parts.append("FLAT CAKE, ZERO TIERS, NO TIERS, NOT A TIERED CAKE, SINGLE FLAT STRUCTURE.")
+    elif etages == "1":
+        details_parts.append("EXACTLY ONE TIER CAKE, ONLY ONE LEVEL, ABSOLUTELY NO ADDED TIERS, SINGLE LAYER DESIGN, NOT A MULTI-TIER CAKE.")
+    elif etages == "2":
+        details_parts.append("EXACTLY TWO TIERS CAKE, ONLY 2 LEVELS, STRICTLY TWO TIERS, NO MORE NO LESS.")
+    elif etages == "3":
+        details_parts.append("EXACTLY THREE TIERS CAKE, ONLY 3 LEVELS, STRICTLY THREE TIERS.")
+    elif etages == "4":
+        details_parts.append("EXACTLY FOUR TIERS CAKE, ONLY 4 LEVELS, STRICTLY FOUR TIERS.")
+    elif etages == "5":
+        details_parts.append("EXACTLY FIVE TIERS CAKE, ONLY 5 LEVELS, STRICTLY FIVE TIERS.")
+    # === КОНЕЦ: ЖЕСТКАЯ ЛОГИКА ЭТАЖЕЙ ===
+
     details_str = " ".join(details_parts)
     
     wishes_lower_fr = wishes_fr.lower() if wishes_fr else ""
@@ -421,4 +438,3 @@ def index(): return jsonify({'service': 'Victoria Cake API'}), 200
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 10000))
     app.run(host='0.0.0.0', port=port)
-
