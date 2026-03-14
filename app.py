@@ -148,17 +148,12 @@ def generate_parallel_variations(payloads, headers):
 
 # --- ВОДЯНОЙ ЗНАК ИЗ ЛОКАЛЬНОГО ФАЙЛА ---
 def add_logo_watermark(base_image):
-    """Берет логотип из локальной папки сервера (logo.png)."""
     try:
         logo_path = os.path.join(os.path.dirname(__file__), 'logo.png')
-        
         if not os.path.exists(logo_path):
-            log_error("Файл logo.png не найден на сервере! Пропускаем водяной знак.")
             return base_image.convert("RGB")
             
         watermark = Image.open(logo_path).convert("RGBA")
-        
-        # Делаем логотип размером 25% от ширины картинки
         base_width, base_height = base_image.size
         w_width = int(base_width * 0.25)
         w_percent = (w_width / float(watermark.size[0]))
@@ -169,16 +164,12 @@ def add_logo_watermark(base_image):
             base_image = base_image.convert('RGBA')
             
         position = (40, 40)
-        
         transparent = Image.new('RGBA', base_image.size, (0,0,0,0))
         transparent.paste(base_image, (0,0))
         transparent.paste(watermark, position, mask=watermark)
-        
-        log_info("Watermark successfully added from local file!")
         return transparent.convert("RGB")
     except Exception as e:
         log_error(f"Ошибка наложения водяного знака: {e}")
-    
     return base_image.convert("RGB")
 
 def remove_emojis(text):
@@ -212,26 +203,27 @@ def build_prompt(data):
     if not cleaned_inscription:
         topper = "On top of the cake, there is an elegant gold topper with the text 'Victoria'."
 
-    # База формы
+    # Заменяем "1-tier" на более понятное ИИ "single tier"
+    etages_text = f"{etages}-tier" if etages != "1" else "SINGLE tier"
+
     if shape_type == 'classic_circle':
-        shape_part = f"A hyper-realistic photograph of a {etages}-tier {event_en} cake."
+        shape_part = f"A hyper-realistic photograph of a {etages_text} {event_en} cake."
     elif shape_type == 'classic_square':
-        shape_part = f"A hyper-realistic photograph of a {etages}-tier square {event_en} cake."
+        shape_part = f"A hyper-realistic photograph of a {etages_text} square {event_en} cake."
     elif shape_type == 'classic_rectangle':
-        shape_part = f"A hyper-realistic photograph of a {etages}-tier rectangular {event_en} cake."
+        shape_part = f"A hyper-realistic photograph of a {etages_text} rectangular {event_en} cake."
     elif shape_type == 'number':
         number = shape_details if shape_details else "0"
         shape_part = f"A hyper-realistic photograph of a number cake in the shape of the number {number}. The cake is LYING FLAT horizontally on the cake board, tart style, viewed from slightly above. The digits are made of cake layers and cream."
         topper = "" 
     else:
         desc = shape_details if shape_details else "custom shape"
-        shape_part = f"A hyper-realistic photograph of a {etages}-tier {event_en} cake in the shape of {desc}."
+        shape_part = f"A hyper-realistic photograph of a {etages_text} {event_en} cake in the shape of {desc}."
 
     details_parts = []
     
-    # ИИ пишет ТОЛЬКО текст клиента. ЖЕСТКО ЗАПРЕЩАЕМ 3D-буквы, топперы и подставки.
     if cleaned_inscription:
-        details_parts.append(f"The name '{cleaned_inscription}' is elegantly PIPED FLAT directly onto the flat surface of the cake using buttercream or liquid chocolate frosting (strictly NOT standing up, NOT a topper, NOT on the board).")
+        details_parts.append(f"The name '{cleaned_inscription}' is elegantly PIPED FLAT directly onto the flat surface of the cake using buttercream (strictly NOT standing up, NOT a topper).")
 
     if wishes_fr:
         try:
@@ -240,22 +232,15 @@ def build_prompt(data):
         except:
             details_parts.append(f"The cake incorporates: {wishes_fr}.")
 
-    # === НАЧАЛО: ЖЕСТКАЯ ЛОГИКА ЭТАЖЕЙ ===
-    # Эта логика применяет бетонные ограничения по этажам в зависимости от выбора,
-    # а для цифр вообще отключает понятие этажности.
+    # Строгие текстовые команды в промпт
     if shape_type == 'number':
         details_parts.append("FLAT CAKE, ZERO TIERS, NO TIERS, NOT A TIERED CAKE, SINGLE FLAT STRUCTURE.")
     elif etages == "1":
         details_parts.append("EXACTLY ONE TIER CAKE, ONLY ONE LEVEL, ABSOLUTELY NO ADDED TIERS, SINGLE LAYER DESIGN, NOT A MULTI-TIER CAKE.")
     elif etages == "2":
-        details_parts.append("EXACTLY TWO TIERS CAKE, ONLY 2 LEVELS, STRICTLY TWO TIERS, NO MORE NO LESS.")
+        details_parts.append("EXACTLY TWO TIERS CAKE, ONLY 2 LEVELS, STRICTLY TWO TIERS.")
     elif etages == "3":
-        details_parts.append("EXACTLY THREE TIERS CAKE, ONLY 3 LEVELS, STRICTLY THREE TIERS.")
-    elif etages == "4":
-        details_parts.append("EXACTLY FOUR TIERS CAKE, ONLY 4 LEVELS, STRICTLY FOUR TIERS.")
-    elif etages == "5":
-        details_parts.append("EXACTLY FIVE TIERS CAKE, ONLY 5 LEVELS, STRICTLY FIVE TIERS.")
-    # === КОНЕЦ: ЖЕСТКАЯ ЛОГИКА ЭТАЖЕЙ ===
+        details_parts.append("EXACTLY THREE TIERS CAKE, ONLY 3 LEVELS.")
 
     details_str = " ".join(details_parts)
     
@@ -279,25 +264,39 @@ def build_prompt(data):
         topper=topper
     )
 
-    return " ".join(prompt.split()), shape_type
+    return " ".join(prompt.split()), shape_type, etages
 
-def get_negative_prompt():
-    return (
+# --- ДИНАМИЧЕСКИЙ ОТРИЦАТЕЛЬНЫЙ ПРОМПТ ---
+def get_negative_prompt(shape_type, etages):
+    base_neg = (
         "blurry, cartoon, illustration, drawing, painting, deformed, ugly, bad proportions, "
         "plastic texture, toy-like, synthetic, non-edible materials, weird shapes, extra items on cake, "
         "people, hands, faces, animals, low resolution, bad lighting, no topper unless specified, "
         "no abstract flowers, no fantasy plants, standing numbers, vertical numbers, "
-        "floating text, standing text, 3D letters, acrylic letters, plastic letters, wood letters, text topper, "
-        "text on the board, writing on the board, text on the plate, writing on the plate, letters on the tray, "
+        "floating text, standing text, 3D letters, text topper, text on the board, "
         "no smooth surface, no perfect smooth fondant, no glossy finish"
     )
+    
+    # Жесткие запреты для ИИ: чего НЕ должно быть на картинке
+    if shape_type == 'number':
+        base_neg += ", tiered cake, stacked cake, tall cake, multi-tier, 2 tiers, 3 tiers, vertical cake"
+    elif etages == "1":
+        base_neg += ", multi-tier cake, multiple tiers, 2 tiers, 3 tiers, 4 tiers, tall stacked cake, multi-level"
+    elif etages == "2":
+        base_neg += ", single tier, 1 tier, flat cake, 3 tiers, 4 tiers"
+    elif etages == "3":
+        base_neg += ", single tier, 1 tier, 2 tiers, 4 tiers"
+        
+    return base_neg
 
 @app.route('/generate', methods=['POST'])
 def generate():
     try:
         data = request.get_json()
-        prompt, shape_type = build_prompt(data)
-        negative_prompt = get_negative_prompt()
+        prompt, shape_type, etages = build_prompt(data)
+        
+        # Теперь негативный промпт генерируется в зависимости от выбора этажей
+        negative_prompt = get_negative_prompt(shape_type, etages)
 
         headers = {
             'Authorization': f'Bearer {WAVESPEED_API_KEY}',
@@ -341,7 +340,6 @@ def send_order():
     try:
         data = request.get_json()
         
-        # Получаем данные, учитывая, что фронтенд их обязательно присылает
         image_base64 = data.get('image_base64', '')
         name = data.get('name', 'Не указано')
         contact = data.get('contact', 'Не указано')
@@ -355,7 +353,6 @@ def send_order():
 
         image_data = base64.b64decode(image_base64)
 
-        # Автоперевод деталей на русский
         try:
             details_ru = GoogleTranslator(source='auto', target='ru').translate(order_details) if order_details else "Нет описания"
         except:
@@ -400,7 +397,6 @@ def upload_order():
 
         photo_bytes = photo.read()
         
-        # Автоперевод описания на русский
         try:
             desc_ru = GoogleTranslator(source='auto', target='ru').translate(description) if description else "Нет описания"
         except:
