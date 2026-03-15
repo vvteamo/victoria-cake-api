@@ -52,7 +52,7 @@ EVENT_TEMPLATES = {
     "Mariage": (
         "{shape_part} Style and texture: {style_desc}. "
         "{details} "
-        "Professional wedding photography, soft romantic lighting, set on an elegant reception table, blurred background, 8k resolution, photorealistic. "
+        "Professional photography, soft romantic lighting, set on an elegant reception table, blurred background, 8k resolution, photorealistic. "
         "{topper}"
     ),
     "Anniversaire adulte": (
@@ -146,7 +146,6 @@ def generate_parallel_variations(payloads, headers):
             pil_images.append(image)
     return pil_images
 
-# --- ВОДЯНОЙ ЗНАК ИЗ ЛОКАЛЬНОГО ФАЙЛА ---
 def add_logo_watermark(base_image):
     try:
         logo_path = os.path.join(os.path.dirname(__file__), 'logo.png')
@@ -199,15 +198,23 @@ def build_prompt(data):
     event_en = EVENT_MAP.get(event, 'celebration')
     style_desc = STYLE_MAP.get(style, STYLE_MAP["Classique Chic"])
 
-    topper = ""
-    if not cleaned_inscription:
-        topper = "On top of the cake, there is an elegant gold topper with the text 'Victoria'."
-
-    # === ХИТРОСТЬ ДЛЯ 1 ЭТАЖА: ВООБЩЕ УДАЛЯЕМ СЛОВО "TIER" ===
+    # === ЯДЕРНЫЙ БЛОК: СТИРАЕМ ТРИГГЕРЫ ДЛЯ 1 ЭТАЖА ===
     if etages == "1":
+        # Убираем слово wedding, чтобы не провоцировать башни
+        if event_en == "wedding":
+            event_en = "elegant celebration"
+        # Убираем "скульптурные формы" из Artistique
+        if "sculptural shapes" in style_desc:
+            style_desc = "flat avant-garde design, horizontal painted canvas, hand-painted watercolor textures, edible gold leaf splashes"
+        
         etages_text = "single-level flat"
     else:
         etages_text = f"{etages}-tier"
+    # ===================================================
+
+    topper = ""
+    if not cleaned_inscription:
+        topper = "On top of the cake, there is an elegant gold topper with the text 'Victoria'."
 
     if shape_type == 'classic_circle':
         shape_part = f"A hyper-realistic photograph of a {etages_text} {event_en} cake."
@@ -235,7 +242,6 @@ def build_prompt(data):
         except:
             details_parts.append(f"The cake incorporates: {wishes_fr}.")
 
-    # Строгие текстовые команды в промпт без слова TIER для 1 этажа
     if shape_type == 'number':
         details_parts.append("FLAT CAKE, ZERO TIERS, NO TIERS, NOT A TIERED CAKE, SINGLE FLAT STRUCTURE.")
     elif etages == "1":
@@ -269,7 +275,6 @@ def build_prompt(data):
 
     return " ".join(prompt.split()), shape_type, etages
 
-# --- ДИНАМИЧЕСКИЙ ОТРИЦАТЕЛЬНЫЙ ПРОМПТ ---
 def get_negative_prompt(shape_type, etages):
     base_neg = (
         "blurry, cartoon, illustration, drawing, painting, deformed, ugly, bad proportions, "
@@ -280,7 +285,6 @@ def get_negative_prompt(shape_type, etages):
         "no smooth surface, no perfect smooth fondant, no glossy finish"
     )
     
-    # Жесткие запреты для ИИ: чего НЕ должно быть на картинке
     if shape_type == 'number':
         base_neg += ", tiered cake, stacked cake, tall cake, multi-tier, 2 tiers, 3 tiers, vertical cake, tower"
     elif etages == "1":
@@ -298,7 +302,6 @@ def generate():
         data = request.get_json()
         prompt, shape_type, etages = build_prompt(data)
         
-        # Теперь негативный промпт генерируется в зависимости от выбора этажей
         negative_prompt = get_negative_prompt(shape_type, etages)
 
         headers = {
